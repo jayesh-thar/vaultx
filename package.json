@@ -12,6 +12,14 @@
     "dev:extension": "npm run dev --workspace=apps/extension",
     "prepare": "husky"
   },
+  "lint-staged": {
+    "**/*.{ts,tsx}": [
+      "prettier --write"
+    ],
+    "**/*.{json,md}": [
+      "prettier --write"
+    ]
+  },
   "engines": {
     "node": ">=20.0.0"
   },
