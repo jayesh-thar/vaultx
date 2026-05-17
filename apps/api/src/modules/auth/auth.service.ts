@@ -11,6 +11,7 @@ import {
   verifyRefreshToken,
 } from '../../utils/jwt';
 import { RegisterInput, LoginInput } from './auth.validation';
+import { logAuditEvent, AuditMeta } from '../../utils/audit';
 
 const REFRESH_TTL = 7 * 24 * 60 * 60; // 7 days in seconds
 
@@ -91,6 +92,7 @@ export async function registerUser(input: RegisterInput) {
     await client.query('COMMIT');
 
     const tokens = await createSession(userId, {});
+    logAuditEvent(userId, 'register', { ip: 'unknown' });
     return { userId, ...tokens };
   } catch (err) {
     await client.query('ROLLBACK');
@@ -112,13 +114,21 @@ export async function loginUser(input: LoginInput, deviceInfo: object) {
 
   // Same error for "user not found" and "wrong password"
   // Never reveal which one failed — prevents user enumeration attacks
-  if (result.rows.length === 0) throw new Error('INVALID_CREDENTIALS');
+  if (result.rows.length === 0) {
+    logAuditEvent(null, 'login_failed', { reason: 'user_not_found' });
+    throw new Error('INVALID_CREDENTIALS');
+  }
 
   const user = result.rows[0];
   const valid = await verifyAuthKey(user.auth_hash, authKey);
-  if (!valid) throw new Error('INVALID_CREDENTIALS');
+
+  if (!valid) {
+    logAuditEvent(user.id, 'login_failed', { reason: 'wrong_password' });
+    throw new Error('INVALID_CREDENTIALS');
+  }
 
   const tokens = await createSession(user.id, deviceInfo);
+  logAuditEvent(user.id, 'login_success', deviceInfo as AuditMeta);
 
   return {
     userId: user.id,
@@ -153,6 +163,7 @@ export async function refreshSession(refreshToken: string) {
     // Nuclear option: kill ALL sessions for this user
     await pool.query('DELETE FROM sessions WHERE user_id = $1', [userId]);
     await redis.del(redisKey);
+    logAuditEvent(userId, 'token_reuse', { reason: 'hash_mismatch' });
     throw new Error('TOKEN_REUSE_DETECTED');
   }
 
@@ -164,7 +175,8 @@ export async function refreshSession(refreshToken: string) {
 }
 
 // ─── Logout ───────────────────────────────────────────────────────────────────
-export async function logoutUser(sessionId: string) {
+export async function logoutUser(sessionId: string, userId: string) {
   await pool.query('DELETE FROM sessions WHERE id = $1', [sessionId]);
   await redis.del(`session:${sessionId}`);
+  logAuditEvent(userId, 'logout', {});
 }

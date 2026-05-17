@@ -93,7 +93,7 @@ export async function refresh(req: Request, res: Response): Promise<void> {
 
 export async function logout(req: Request, res: Response): Promise<void> {
   try {
-    await logoutUser(req.user!.sessionId);
+    await logoutUser(req.user!.sessionId, req.user!.userId);
     res.clearCookie('refreshToken');
     res.json({ message: 'Logged out successfully' });
   } catch {

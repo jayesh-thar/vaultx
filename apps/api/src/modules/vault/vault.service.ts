@@ -1,4 +1,5 @@
 import { pool } from '../../db/pool';
+import { logAuditEvent } from '../../utils/audit';
 
 // Get vault belonging to user
 export async function getUserVault(userId: string) {
@@ -23,6 +24,7 @@ export async function getVaultItems(userId: string) {
     [userId]
   );
 
+  logAuditEvent(userId, 'vault_access', { success: true });
   return result.rows;
 }
 
