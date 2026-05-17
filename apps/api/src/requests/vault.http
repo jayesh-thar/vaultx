@@ -1,0 +1,34 @@
+### Get Vault (paste your accessToken)
+GET http://localhost:5000/api/vault
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJkMTQ5NmU2ZS0wMWZmLTQ5NmUtOTRiYS03ZDk4N2Q0MGZkZmQiLCJzZXNzaW9uSWQiOiJhOTcxNDVlZi00YTVjLTQ3ZTQtYTEzZC1iMWFkOWU4NmRkOWEiLCJpYXQiOjE3NzkwMTQ2MTMsImV4cCI6MTc3OTAxNTUxM30.KNQ-yLj5o3dyFEAOvU7bsjRMzw93AietJT-K72u0gC8
+
+### Get Items
+GET http://localhost:5000/api/vault/items
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJkMTQ5NmU2ZS0wMWZmLTQ5NmUtOTRiYS03ZDk4N2Q0MGZkZmQiLCJzZXNzaW9uSWQiOiJhOTcxNDVlZi00YTVjLTQ3ZTQtYTEzZC1iMWFkOWU4NmRkOWEiLCJpYXQiOjE3NzkwMTQ2MTMsImV4cCI6MTc3OTAxNTUxM30.KNQ-yLj5o3dyFEAOvU7bsjRMzw93AietJT-K72u0gC8
+
+### Create Item
+POST http://localhost:5000/api/vault/items
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJkMTQ5NmU2ZS0wMWZmLTQ5NmUtOTRiYS03ZDk4N2Q0MGZkZmQiLCJzZXNzaW9uSWQiOiJhOTcxNDVlZi00YTVjLTQ3ZTQtYTEzZC1iMWFkOWU4NmRkOWEiLCJpYXQiOjE3NzkwMTQ2MTMsImV4cCI6MTc3OTAxNTUxM30.KNQ-yLj5o3dyFEAOvU7bsjRMzw93AietJT-K72u0gC8
+Content-Type: application/json
+
+{
+  "type": "login",
+  "encryptedData": "U2FsdGVkX1abc123encryptedblob",
+  "iv": "randomiv123456",
+  "category": "Social"
+}
+
+### Update Item (paste an item id from create response)
+PUT http://localhost:5000/api/vault/items/c3ebb59c-0e03-4415-bcbb-4ba4e4cf63d6
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJkMTQ5NmU2ZS0wMWZmLTQ5NmUtOTRiYS03ZDk4N2Q0MGZkZmQiLCJzZXNzaW9uSWQiOiJhOTcxNDVlZi00YTVjLTQ3ZTQtYTEzZC1iMWFkOWU4NmRkOWEiLCJpYXQiOjE3NzkwMTQ2MTMsImV4cCI6MTc3OTAxNTUxM30.KNQ-yLj5o3dyFEAOvU7bsjRMzw93AietJT-K72u0gC8
+Content-Type: application/json
+
+{
+  "encryptedData": "UpdatedEncryptedBlob456",
+  "iv": "newiv789",
+  "category": "Work"
+}
+
+### Delete Item
+DELETE http://localhost:5000/api/vault/items/c3ebb59c-0e03-4415-bcbb-4ba4e4cf63d6
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJkMTQ5NmU2ZS0wMWZmLTQ5NmUtOTRiYS03ZDk4N2Q0MGZkZmQiLCJzZXNzaW9uSWQiOiJhOTcxNDVlZi00YTVjLTQ3ZTQtYTEzZC1iMWFkOWU4NmRkOWEiLCJpYXQiOjE3NzkwMTQ2MTMsImV4cCI6MTc3OTAxNTUxM30.KNQ-yLj5o3dyFEAOvU7bsjRMzw93AietJT-K72u0gC8

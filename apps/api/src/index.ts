@@ -6,6 +6,7 @@ import dotenv from 'dotenv';
 import { pool } from './db/pool';
 import { redis } from './db/redis';
 import authRoutes from './modules/auth/auth.routes';
+import vaultRoutes from './modules/vault/vault.routes';
 
 dotenv.config();
 
@@ -18,6 +19,7 @@ app.use(express.json());
 app.use(cookieParser()); // must be before routes that read cookies
 
 app.use('/api/auth', authRoutes);
+app.use('/api/vault', vaultRoutes); // ← add this
 
 app.get('/health', async (_req, res) => {
   try {
