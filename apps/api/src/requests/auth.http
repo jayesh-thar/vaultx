@@ -1,0 +1,29 @@
+### 1. Register
+POST http://localhost:5000/api/auth/register
+Content-Type: application/json
+
+{
+  "email": "test01@vaultx.com",
+  "authKey": "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
+  "authSalt": "testsalt123",
+  "kdfSalt": "kdfSalt123",
+  "kdfParams": { "memory": 65536, "iterations": 3, "parallelism": 1 },
+  "vaultKeyEnc": "encryptedvaultkey123",
+  "vaultKeyIv": "vaultiv123"
+}
+
+### 2. Login
+POST http://localhost:5000/api/auth/login
+Content-Type: application/json
+
+{
+  "email": "test01@vaultx.com",
+  "authKey": "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
+}
+
+### 3. Refresh
+POST http://localhost:5000/api/auth/refresh
+
+### 4. Logout  (paste accessToken from login response)
+POST http://localhost:5000/api/auth/logout
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJkMTQ5NmU2ZS0wMWZmLTQ5NmUtOTRiYS03ZDk4N2Q0MGZkZmQiLCJzZXNzaW9uSWQiOiI5M2I4MmMxMy03ZWQxLTRiYzEtOWE0YS02MjBlZTViOGIyOGMiLCJpYXQiOjE3NzkwMTM4NDQsImV4cCI6MTc3OTAxNDc0NH0.GPLFGw24vUUa_Y-4eVJC_RlHNLImf6zqcfiEE1RM87k
