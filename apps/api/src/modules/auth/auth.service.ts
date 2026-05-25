@@ -174,6 +174,62 @@ export async function refreshSession(refreshToken: string) {
   return createSession(userId, session.deviceInfo || {});
 }
 
+// ─── Change Password ──────────────────────────────────────────────────────────
+export async function changeUserPassword(
+  userId: string,
+  input: {
+    currentAuthKey: string;
+    newAuthKey: string;
+    newAuthSalt: string;
+    newKdfSalt: string;
+    newKdfParams: { memory: number; iterations: number; parallelism: number };
+    newVaultKeyEnc: string;
+    newVaultKeyIv: string;
+  }
+): Promise<void> {
+  const result = await pool.query('SELECT auth_hash FROM users WHERE id = $1', [
+    userId,
+  ]);
+  if (result.rows.length === 0) throw new Error('USER_NOT_FOUND');
+
+  // Verify current password
+  const valid = await verifyAuthKey(
+    result.rows[0].auth_hash,
+    input.currentAuthKey
+  );
+  if (!valid) throw new Error('INVALID_CREDENTIALS');
+
+  // Hash the new authKey server-side (same as registration)
+  const newAuthHash = await hashAuthKey(input.newAuthKey);
+
+  // Update all auth + KDF fields atomically
+  await pool.query(
+    `UPDATE users SET
+      auth_hash    = $1,
+      auth_salt    = $2,
+      kdf_salt     = $3,
+      kdf_params   = $4,
+      vault_key_enc = $5,
+      vault_key_iv  = $6,
+      updated_at   = NOW()
+     WHERE id = $7`,
+    [
+      newAuthHash,
+      input.newAuthSalt,
+      input.newKdfSalt,
+      JSON.stringify(input.newKdfParams),
+      input.newVaultKeyEnc,
+      input.newVaultKeyIv,
+      userId,
+    ]
+  );
+
+  // Invalidate ALL sessions — force re-login everywhere
+  await pool.query('DELETE FROM sessions WHERE user_id = $1', [userId]);
+
+  logAuditEvent(userId, 'password_changed', {});
+}
+
 // ─── Logout ───────────────────────────────────────────────────────────────────
 export async function logoutUser(sessionId: string, userId: string) {
   await pool.query('DELETE FROM sessions WHERE id = $1', [sessionId]);

@@ -19,5 +19,16 @@ export const loginSchema = z.object({
   authKey: z.string().min(64),
 });
 
+// ADD this interface and schema
+export interface ChangePasswordInput {
+  currentAuthKey: string;
+  newAuthKey: string;
+  newAuthSalt: string;
+  newKdfSalt: string;
+  newKdfParams: { memory: number; iterations: number; parallelism: number };
+  newVaultKeyEnc: string;
+  newVaultKeyIv: string;
+}
+
 export type RegisterInput = z.infer<typeof registerSchema>;
 export type LoginInput = z.infer<typeof loginSchema>;

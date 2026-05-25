@@ -4,6 +4,7 @@ import {
   loginUser,
   refreshSession,
   logoutUser,
+  changeUserPassword,
 } from './auth.service';
 import { registerSchema, loginSchema } from './auth.validation';
 
@@ -88,6 +89,28 @@ export async function refresh(req: Request, res: Response): Promise<void> {
       return;
     }
     res.status(401).json({ error: 'Session expired' });
+  }
+}
+
+export async function changePassword(
+  req: Request,
+  res: Response
+): Promise<void> {
+  try {
+    await changeUserPassword(req.user!.userId, req.body);
+    res.json({ message: 'Password changed successfully' });
+  } catch (err: unknown) {
+    if (err instanceof Error) {
+      if (err.message === 'INVALID_CREDENTIALS') {
+        res.status(401).json({ error: 'Current password is incorrect' });
+        return;
+      }
+      if (err.message === 'USER_NOT_FOUND') {
+        res.status(404).json({ error: 'User not found' });
+        return;
+      }
+    }
+    res.status(500).json({ error: 'Failed to change password' });
   }
 }
 

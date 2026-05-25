@@ -8,7 +8,7 @@ import { redis } from './db/redis';
 import authRoutes from './modules/auth/auth.routes';
 import vaultRoutes from './modules/vault/vault.routes';
 import { globalLimiter } from './middleware/rateLimiter';
-import { globalLimiter } from './middleware/rateLimiter';
+import userRoutes from './modules/user/user.routes';
 
 dotenv.config();
 
@@ -22,7 +22,8 @@ app.use(cookieParser()); // must be before routes that read cookies
 app.use(globalLimiter);
 
 app.use('/api/auth', authRoutes);
-app.use('/api/vault', vaultRoutes); // ← add this
+app.use('/api/vault', vaultRoutes);
+app.use('/api/user', userRoutes);
 
 app.get('/health', async (_req, res) => {
   try {

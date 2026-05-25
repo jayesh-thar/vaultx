@@ -18,3 +18,115 @@
   --danger: #ef4444;
   --warning: #f59e0b;
 }
+
+/* Light theme */
+/* ── Light theme (less white, slate-based) ─────────── */
+:root[data-theme='light'] {
+  --accent: #059669;
+  --accent-hover: #047857;
+  --accent-subtle: #d1fae5;
+  --bg-base: #dde3ec;
+  --bg-surface: #ebf0f5;
+  --bg-elevated: #d0d8e4;
+  --border: #b0bccb;
+  --text-primary: #0d1b2a;
+  --text-secondary: #243447;
+  --text-muted: #5c7080;
+  --danger: #dc2626;
+  --warning: #d97706;
+}
+
+/* ── Interaction utilities ──────────────────────────── */
+.vx-btn {
+  transition:
+    opacity 0.15s ease,
+    transform 0.1s ease;
+  cursor: pointer;
+}
+.vx-btn:hover {
+  opacity: 0.82;
+}
+.vx-btn:active {
+  transform: scale(0.96);
+}
+
+.vx-btn-accent {
+  transition:
+    background 0.15s ease,
+    transform 0.1s ease,
+    box-shadow 0.15s ease;
+  cursor: pointer;
+}
+.vx-btn-accent:hover {
+  background: var(--accent-hover) !important;
+  box-shadow: 0 4px 12px rgba(5, 150, 105, 0.35);
+}
+.vx-btn-accent:active {
+  transform: scale(0.97);
+}
+
+.vx-btn-ghost {
+  transition:
+    background 0.12s ease,
+    color 0.12s ease,
+    transform 0.1s ease;
+  cursor: pointer;
+}
+.vx-btn-ghost:hover {
+  background: var(--bg-elevated) !important;
+}
+.vx-btn-ghost:active {
+  transform: scale(0.97);
+}
+
+.vx-btn-danger {
+  transition:
+    background 0.12s ease,
+    color 0.12s ease,
+    transform 0.1s ease;
+  cursor: pointer;
+}
+.vx-btn-danger:hover {
+  background: var(--danger) !important;
+  color: #fff !important;
+}
+.vx-btn-danger:active {
+  transform: scale(0.97);
+}
+
+.vx-nav-item {
+  transition:
+    background 0.12s ease,
+    color 0.12s ease;
+  cursor: pointer;
+}
+.vx-nav-item:hover {
+  background: var(--bg-elevated) !important;
+}
+
+.vx-card {
+  transition:
+    border-color 0.15s ease,
+    transform 0.15s ease;
+}
+.vx-card:hover {
+  border-color: var(--text-muted) !important;
+  transform: translateY(-2px);
+}
+
+.vx-input {
+  transition: border-color 0.15s ease;
+}
+.vx-input:focus {
+  border-color: var(--accent) !important;
+}
+
+.vx-sidebar-btn {
+  transition:
+    background 0.12s ease,
+    color 0.12s ease;
+  cursor: pointer;
+}
+.vx-sidebar-btn:hover {
+  background: var(--bg-elevated) !important;
+}
