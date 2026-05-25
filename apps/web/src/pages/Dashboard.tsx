@@ -92,7 +92,7 @@ function generatePassword(length = 20): string {
     .join('');
 }
 
-function buildPayload(form: FormState): ItemPayload {
+function buildPayload(form: FormState, isNewPassword = false): ItemPayload {
   const base = {
     favorite: form.favorite,
     customFields: form.customFields.length > 0 ? form.customFields : undefined,
@@ -292,7 +292,7 @@ export default function Dashboard() {
     setSaving(true);
     setFormError('');
     try {
-      const payloadData = buildPayload(form);
+      const payloadData = buildPayload(form, !editingId); // true = new item, false = edit
       const { ciphertext: encryptedData, iv } = await encrypt(
         JSON.stringify(payloadData),
         vaultKey

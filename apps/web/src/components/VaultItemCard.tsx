@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import type { DecryptedVaultItem } from '../pages/Dashboard';
 import { getFaviconUrl } from '../lib/favicon';
 
@@ -72,17 +72,25 @@ export default function VaultItemCard({
     }, 1000);
   }
 
-  function getPasswordAge(changedAt?: string): string | null {
-    if (!changedAt) return null;
+  const passwordAge = useMemo(() => {
+    if (!payload.passwordChangedAt) return null;
     const days = Math.floor(
-      (Date.now() - new Date(changedAt).getTime()) / (1000 * 60 * 60 * 24)
+      (new Date().getTime() - new Date(payload.passwordChangedAt).getTime()) /
+        86400000
     );
     if (days === 0) return 'Changed today';
     if (days === 1) return 'Changed yesterday';
     if (days < 30) return `Changed ${days}d ago`;
     if (days < 365) return `Changed ${Math.floor(days / 30)}mo ago`;
     return `Changed ${Math.floor(days / 365)}y ago`;
-  }
+  }, [payload.passwordChangedAt]);
+
+  const passwordAgeDays = payload.passwordChangedAt
+    ? Math.floor(
+        (new Date().getTime() - new Date(payload.passwordChangedAt).getTime()) /
+          86400000
+      )
+    : 0;
 
   function handleDelete() {
     if (confirmDelete) {
@@ -205,24 +213,19 @@ export default function VaultItemCard({
             </span>
           </div>
         )}
-        {type === 'login' && payload.passwordChangedAt && (
+        {type === 'login' && passwordAge && (
           <p
             className="text-xs"
             style={{
-              color: (() => {
-                const days = Math.floor(
-                  (Date.now() - new Date(payload.passwordChangedAt).getTime()) /
-                    86400000
-                );
-                return days > 180
+              color:
+                passwordAgeDays > 180
                   ? '#EF4444'
-                  : days > 90
+                  : passwordAgeDays > 90
                     ? '#F59E0B'
-                    : 'var(--text-muted)';
-              })(),
+                    : 'var(--text-muted)',
             }}
           >
-            🕐 {getPasswordAge(payload.passwordChangedAt)}
+            🕐 {passwordAge}
           </p>
         )}
 
