@@ -545,7 +545,7 @@ export default function Sidebar({
               />
             ) : (
               <span className="text-xs font-medium">
-                {displayName.charAt(0).toUpperCase()}
+                {(displayName || email || 'U').charAt(0).toUpperCase()}
               </span>
             )}
           </div>
