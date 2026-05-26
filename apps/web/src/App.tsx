@@ -7,6 +7,7 @@ import Unlock from './pages/Unlock';
 import Dashboard from './pages/Dashboard';
 import Settings from './pages/Settings';
 import { useEffect } from 'react';
+import HealthDashboard from './pages/HealthDashboard';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { userId, vaultKey } = useVaultStore();
@@ -54,6 +55,14 @@ export default function App() {
           }
         />
         <Route path="*" element={<Navigate to="/login" replace />} />
+        <Route
+          path="/health"
+          element={
+            <ProtectedRoute>
+              <HealthDashboard />
+            </ProtectedRoute>
+          }
+        />
       </Routes>
     </BrowserRouter>
   );
