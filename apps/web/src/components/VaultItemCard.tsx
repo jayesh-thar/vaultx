@@ -1,12 +1,17 @@
-import { useState, useRef, useEffect, useMemo } from 'react';
-import type { DecryptedVaultItem } from '../pages/Dashboard';
+import { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { getFaviconUrl } from '../lib/favicon';
+import { generateTOTP, type TOTPResult } from '../lib/totp';
+import type {
+  PasswordHistoryEntry,
+  DecryptedVaultItem,
+} from '../pages/Dashboard';
 
 interface Props {
   item: DecryptedVaultItem;
   onEdit: () => void;
   onDelete: () => void;
   onToggleFavorite: () => void;
+  onShare: () => void;
 }
 
 function getPasswordStrength(p: string) {
@@ -49,12 +54,35 @@ export default function VaultItemCard({
       ? getPasswordStrength(payload.password)
       : null;
   const initials = payload.title.slice(0, 2).toUpperCase();
+  const [totp, setTotp] = useState<TOTPResult | null>(null);
+  const [totpCopied, setTotpCopied] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
 
   useEffect(() => {
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current);
     };
   }, []);
+
+  // TOTP auto-refresh every second
+  useEffect(() => {
+    if (!payload.totpSecret) return;
+
+    let cancelled = false;
+
+    async function refresh() {
+      if (cancelled || !payload.totpSecret) return;
+      const result = await generateTOTP(payload.totpSecret);
+      if (!cancelled) setTotp(result);
+    }
+
+    refresh();
+    const id = setInterval(refresh, 1000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [payload.totpSecret]);
 
   async function handleCopy(text: string) {
     await navigator.clipboard.writeText(text);
@@ -228,6 +256,87 @@ export default function VaultItemCard({
             🕐 {passwordAge}
           </p>
         )}
+        {/* TOTP Code */}
+        {type === 'login' && payload.totpSecret && totp && (
+          <div
+            className="flex items-center gap-2 px-3 py-2 rounded-lg"
+            style={{ background: 'var(--bg-elevated)', marginTop: 4 }}
+          >
+            {/* Countdown ring */}
+            <svg
+              width="20"
+              height="20"
+              viewBox="0 0 20 20"
+              className="flex-shrink-0"
+            >
+              <circle
+                cx="10"
+                cy="10"
+                r="8"
+                fill="none"
+                stroke="var(--border)"
+                strokeWidth="2"
+              />
+              <circle
+                cx="10"
+                cy="10"
+                r="8"
+                fill="none"
+                stroke={
+                  totp.secondsRemaining <= 5 ? '#EF4444' : 'var(--accent)'
+                }
+                strokeWidth="2"
+                strokeDasharray={`${2 * Math.PI * 8}`}
+                strokeDashoffset={`${2 * Math.PI * 8 * (1 - totp.progress)}`}
+                strokeLinecap="round"
+                transform="rotate(-90 10 10)"
+                style={{ transition: 'stroke-dashoffset 0.9s linear' }}
+              />
+              <text
+                x="10"
+                y="10"
+                textAnchor="middle"
+                dominantBaseline="middle"
+                style={{
+                  fontSize: 7,
+                  fill:
+                    totp.secondsRemaining <= 5
+                      ? '#EF4444'
+                      : 'var(--text-muted)',
+                }}
+              >
+                {totp.secondsRemaining}
+              </text>
+            </svg>
+
+            <span
+              className="flex-1 font-mono text-sm font-semibold tracking-widest"
+              style={{
+                color:
+                  totp.secondsRemaining <= 5
+                    ? '#EF4444'
+                    : 'var(--text-primary)',
+              }}
+            >
+              {totp.formatted}
+            </span>
+
+            <button
+              onClick={async () => {
+                await navigator.clipboard.writeText(totp.code);
+                setTotpCopied(true);
+                setTimeout(() => setTotpCopied(false), 2000);
+              }}
+              aria-label="Copy TOTP code"
+              className="text-xs vx-btn"
+              style={{
+                color: totpCopied ? 'var(--accent)' : 'var(--text-muted)',
+              }}
+            >
+              {totpCopied ? '✓' : 'Copy'}
+            </button>
+          </div>
+        )}
 
         {/* Copy row — Login */}
         {type === 'login' && payload.password && (
@@ -284,7 +393,7 @@ export default function VaultItemCard({
         className="flex items-center gap-2 px-4 py-3"
         style={{ borderTop: '0.5px solid var(--border)' }}
       >
-        {/* Favorite */}
+        {/* Favorite — standalone button */}
         <button
           onClick={onToggleFavorite}
           aria-label={
@@ -314,6 +423,77 @@ export default function VaultItemCard({
           </svg>
         </button>
 
+        {/* History — only for login items with saved history */}
+        {type === 'login' && (payload.passwordHistory?.length ?? 0) > 0 && (
+          <button
+            onClick={() => setShowHistory((p) => !p)}
+            aria-label="Show password history"
+            className="flex items-center justify-center w-7 h-7 rounded-lg vx-btn"
+            style={{
+              background: showHistory
+                ? 'var(--accent-subtle)'
+                : 'var(--bg-elevated)',
+              color: showHistory ? 'var(--accent)' : 'var(--text-muted)',
+            }}
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none">
+              <polyline
+                points="12 8 12 12 14 14"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+              />
+              <path
+                d="M3.05 11a9 9 0 1 0 .5-4.4M3 7v4h4"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </button>
+        )}
+
+        {/* Share */}
+        <button
+          onClick={onShare}
+          aria-label="Share"
+          className="flex items-center justify-center w-7 h-7 rounded-lg vx-btn"
+          style={{
+            background: 'var(--bg-elevated)',
+            color: 'var(--text-muted)',
+          }}
+        >
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none">
+            <circle
+              cx="18"
+              cy="5"
+              r="3"
+              stroke="currentColor"
+              strokeWidth="2"
+            />
+            <circle
+              cx="6"
+              cy="12"
+              r="3"
+              stroke="currentColor"
+              strokeWidth="2"
+            />
+            <circle
+              cx="18"
+              cy="19"
+              r="3"
+              stroke="currentColor"
+              strokeWidth="2"
+            />
+            <path
+              d="M8.59 13.51l6.83 3.98M15.41 6.51l-6.82 3.98"
+              stroke="currentColor"
+              strokeWidth="2"
+            />
+          </svg>
+        </button>
+
         <button
           onClick={onEdit}
           className="flex-1 text-xs py-1.5 rounded-lg vx-btn-ghost"
@@ -337,6 +517,94 @@ export default function VaultItemCard({
           {confirmDelete ? 'Confirm?' : 'Delete'}
         </button>
       </div>
+
+      {/* Password History Panel — OUTSIDE the action bar */}
+      {showHistory && (payload.passwordHistory?.length ?? 0) > 0 && (
+        <div
+          className="mx-4 mb-3 rounded-lg overflow-hidden"
+          style={{
+            border: '0.5px solid var(--border)',
+            background: 'var(--bg-elevated)',
+          }}
+        >
+          <div
+            className="px-3 py-2"
+            style={{ borderBottom: '0.5px solid var(--border)' }}
+          >
+            <p
+              className="text-xs font-medium"
+              style={{ color: 'var(--text-muted)' }}
+            >
+              Password history (last {payload.passwordHistory!.length})
+            </p>
+          </div>
+          {payload.passwordHistory!.map((entry, i) => (
+            <HistoryRow key={i} entry={entry} />
+          ))}
+        </div>
+      )}
     </div>
   );
+
+  // HistoryRow helper component
+  function HistoryRow({ entry }: { entry: PasswordHistoryEntry }) {
+    const [show, setShow] = useState(false);
+    const [copied, setCopied] = useState(false);
+
+    const age = useMemo(() => {
+      const days = Math.floor(
+        (Date.now() - new Date(entry.changedAt).getTime()) / 86400000
+      );
+      if (days === 0) return 'Today';
+      if (days === 1) return '1 day ago';
+      if (days < 30) return `${days} days ago`;
+      if (days < 365) return `${Math.floor(days / 30)}mo ago`;
+      return `${Math.floor(days / 365)}y ago`;
+    }, [entry.changedAt]);
+
+    return (
+      <div
+        className="flex items-center gap-2 px-3 py-2"
+        style={{ borderBottom: '0.5px solid var(--border)' }}
+      >
+        <span
+          className="flex-1 text-xs font-mono"
+          style={{
+            color: 'var(--text-secondary)',
+            letterSpacing: show ? 0 : 3,
+          }}
+        >
+          {show ? entry.password : '••••••••••'}
+        </span>
+        <span
+          className="text-xs"
+          style={{ color: 'var(--text-muted)', flexShrink: 0 }}
+        >
+          {age}
+        </span>
+        <button
+          onClick={() => setShow((p) => !p)}
+          className="text-xs vx-btn"
+          style={{ color: 'var(--text-muted)', flexShrink: 0 }}
+        >
+          {show ? 'Hide' : 'Show'}
+        </button>
+        <button
+          onClick={async () => {
+            await navigator.clipboard.writeText(entry.password);
+            setCopied(true);
+            setTimeout(() => setCopied(false), 2000);
+          }}
+          aria-label="Copy old password"
+          className="text-xs vx-btn"
+          style={{
+            color: copied ? 'var(--accent)' : 'var(--text-muted)',
+            flexShrink: 0,
+          }}
+        >
+          {copied ? '✓' : 'Copy'}
+        </button>
+      </div>
+    );
+  }
 }

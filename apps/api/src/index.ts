@@ -9,6 +9,7 @@ import authRoutes from './modules/auth/auth.routes';
 import vaultRoutes from './modules/vault/vault.routes';
 import { globalLimiter } from './middleware/rateLimiter';
 import userRoutes from './modules/user/user.routes';
+import shareRoutes from './modules/share/share.routes';
 
 dotenv.config();
 
@@ -24,6 +25,8 @@ app.use(globalLimiter);
 app.use('/api/auth', authRoutes);
 app.use('/api/vault', vaultRoutes);
 app.use('/api/user', userRoutes);
+
+app.use('/api/share', shareRoutes);
 
 app.get('/health', async (_req, res) => {
   try {

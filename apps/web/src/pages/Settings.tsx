@@ -9,7 +9,9 @@ import {
   toHex,
   DEFAULT_KDF_PARAMS,
 } from '../lib/kdf';
-import { decryptBytes, encryptBytes } from '../lib/crypto';
+import { decryptBytes, encryptBytes, encrypt } from '../lib/crypto';
+import { parseCSV, type ParsedItem } from '../lib/csvImport';
+import { useVaultStore } from '../store/useVaultStore';
 
 type Tab = 'profile' | 'security' | 'appearance' | 'data';
 
@@ -322,7 +324,7 @@ function ProfileTab({
     try {
       await api.put('/api/user/profile', {
         displayName: trimmed,
-        ...(photo && photo !== prevPhoto ? { profilePhoto: photo } : {}),
+        profilePhoto: photo ?? undefined,
       });
       setDisplayName(trimmed);
       // Clear localStorage leftovers
@@ -433,6 +435,7 @@ function ProfileTab({
               ref={fileRef}
               type="file"
               accept="image/*"
+              aria-label="Upload profile photo"
               className="hidden"
               onChange={handlePhotoChange}
             />
@@ -1019,12 +1022,73 @@ function AppearanceTab({
 // ─── Data Tab ─────────────────────────────────────────────────────────────────
 
 function DataTab({ session }: { session: ReturnType<typeof loadSession> }) {
+  const { vaultKey } = useVaultStore();
+
+  // ── existing state ──
   const [exporting, setExporting] = useState(false);
   const [exportDone, setExportDone] = useState(false);
   const [showExportModal, setShowExportModal] = useState(false);
   const [exportPassword, setExportPassword] = useState('');
   const [exportError, setExportError] = useState('');
   const [verifying, setVerifying] = useState(false);
+
+  // ── ADD CSV state here ──
+  const [csvState, setCsvState] = useState<
+    'idle' | 'preview' | 'importing' | 'done'
+  >('idle');
+  const [csvItems, setCsvItems] = useState<ParsedItem[]>([]);
+  const [csvFormat, setCsvFormat] = useState('');
+  const [csvProgress, setCsvProgress] = useState(0);
+  const csvRef = useRef<HTMLInputElement>(null);
+
+  // ── ADD CSV handlers here ──
+  async function handleCSVFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const text = await file.text();
+    const { items, format } = parseCSV(text);
+    if (items.length === 0) {
+      alert('No valid items found.');
+      return;
+    }
+    setCsvItems(items);
+    setCsvFormat(format);
+    setCsvState('preview');
+  }
+
+  async function handleImport() {
+    if (!vaultKey) return;
+    setCsvState('importing');
+    for (let i = 0; i < csvItems.length; i++) {
+      try {
+        const item = csvItems[i];
+        const { ciphertext: encryptedData, iv } = await encrypt(
+          JSON.stringify({
+            title: item.title,
+            username: item.username,
+            password: item.password,
+            url: item.url,
+            notes: item.notes,
+            passwordChangedAt: new Date().toISOString(),
+          }),
+          vaultKey
+        );
+        await api.post('/api/vault/items', {
+          type: 'login',
+          encryptedData,
+          iv,
+        });
+      } catch {
+        /* skip */
+      }
+      setCsvProgress(i + 1);
+    }
+    setCsvState('done');
+    alert(`Imported ${csvItems.length} items.`);
+    setCsvState('idle');
+  }
+
+  // ── existing handlers below (confirmExport, handleExport, etc.) ──
 
   async function confirmExport() {
     if (!exportPassword) return setExportError('Enter your master password.');
@@ -1127,6 +1191,152 @@ function DataTab({ session }: { session: ReturnType<typeof loadSession> }) {
               ? 'Exporting...'
               : 'Export encrypted backup'}
         </button>
+      </Card>
+
+      <Card>
+        <SectionLabel>Import from Password Manager</SectionLabel>
+        <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>
+          Import from Chrome, Firefox, LastPass, Bitwarden, or 1Password CSV
+          exports.
+        </p>
+
+        {csvState === 'idle' && (
+          <>
+            <button
+              onClick={() => csvRef.current?.click()}
+              className="flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium vx-btn-ghost self-start"
+              style={{
+                border: '0.5px solid var(--border)',
+                color: 'var(--text-primary)',
+              }}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+                <path
+                  d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+              Choose CSV file
+            </button>
+            <input
+              ref={csvRef}
+              type="file"
+              accept=".csv,.txt"
+              aria-label="Choose CSV file"
+              className="hidden"
+              onChange={handleCSVFile}
+            />
+            <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
+              Supports: Chrome · Firefox · LastPass · Bitwarden · 1Password
+            </p>
+          </>
+        )}
+
+        {csvState === 'preview' && (
+          <div className="flex flex-col gap-3">
+            <div
+              className="rounded-lg p-3 flex items-center justify-between"
+              style={{ background: 'var(--bg-elevated)' }}
+            >
+              <span
+                className="text-sm"
+                style={{ color: 'var(--text-primary)' }}
+              >
+                Found <strong>{csvItems.length}</strong> passwords
+                <span
+                  className="ml-2 text-xs capitalize"
+                  style={{ color: 'var(--accent)' }}
+                >
+                  ({csvFormat} format detected)
+                </span>
+              </span>
+              <button
+                onClick={() => setCsvState('idle')}
+                className="text-xs vx-btn"
+                style={{ color: 'var(--text-muted)' }}
+              >
+                Cancel
+              </button>
+            </div>
+
+            {/* Preview first 3 */}
+            <div className="flex flex-col gap-1.5">
+              {csvItems.slice(0, 3).map((item, i) => (
+                <div
+                  key={i}
+                  className="rounded-lg px-3 py-2 flex items-center gap-3"
+                  style={{
+                    background: 'var(--bg-elevated)',
+                    border: '0.5px solid var(--border)',
+                  }}
+                >
+                  <div
+                    className="w-7 h-7 rounded flex items-center justify-center text-xs font-medium flex-shrink-0"
+                    style={{
+                      background: 'var(--accent-subtle)',
+                      color: 'var(--accent)',
+                    }}
+                  >
+                    {item.title.slice(0, 2).toUpperCase()}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p
+                      className="text-xs font-medium truncate"
+                      style={{ color: 'var(--text-primary)' }}
+                    >
+                      {item.title}
+                    </p>
+                    <p
+                      className="text-xs truncate"
+                      style={{ color: 'var(--text-muted)' }}
+                    >
+                      {item.username}
+                    </p>
+                  </div>
+                </div>
+              ))}
+              {csvItems.length > 3 && (
+                <p
+                  className="text-xs pl-2"
+                  style={{ color: 'var(--text-muted)' }}
+                >
+                  + {csvItems.length - 3} more items...
+                </p>
+              )}
+            </div>
+
+            <button
+              onClick={handleImport}
+              className="rounded-lg py-2.5 text-sm font-medium vx-btn-accent"
+              style={{ background: 'var(--accent)', color: '#fff' }}
+            >
+              Import {csvItems.length} items to vault
+            </button>
+          </div>
+        )}
+
+        {csvState === 'importing' && (
+          <div className="flex flex-col gap-2">
+            <p className="text-sm" style={{ color: 'var(--text-primary)' }}>
+              Importing... {csvProgress}/{csvItems.length}
+            </p>
+            <div
+              className="h-1.5 rounded-full overflow-hidden"
+              style={{ background: 'var(--border)' }}
+            >
+              <div
+                className="h-full rounded-full transition-all"
+                style={{
+                  width: `${(csvProgress / csvItems.length) * 100}%`,
+                  background: 'var(--accent)',
+                }}
+              />
+            </div>
+          </div>
+        )}
       </Card>
 
       {/* Danger zone */}

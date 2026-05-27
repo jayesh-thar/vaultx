@@ -395,7 +395,7 @@ export default function HealthDashboard() {
                       className="text-xs mt-0.5"
                       style={{ color: 'var(--text-muted)' }}
                     >
-                      {f.label.replace(/[🔴🟡🟠📅] /, '')}
+                      {f.label.split(' ').slice(1).join(' ')}
                     </p>
                   </button>
                 ))}

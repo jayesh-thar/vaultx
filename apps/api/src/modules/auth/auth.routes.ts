@@ -5,6 +5,7 @@ import {
   refresh,
   logout,
   changePassword,
+  prelogin,
 } from './auth.controller';
 import { authenticate } from '../../middleware/authenticate';
 import { validateEmailDomain } from '../../middleware/emailValidator';
@@ -14,6 +15,7 @@ import {
   refreshLimiter,
 } from '../../middleware/rateLimiter';
 import { hibpCheck } from '../../middleware/hibp';
+import { googleAuth, googleCallback, googleSetupComplete } from './auth.google';
 
 const router = Router();
 
@@ -28,5 +30,9 @@ router.post('/login', loginLimiter, login);
 router.post('/refresh', refreshLimiter, refresh);
 router.put('/change-password', authenticate, changePassword);
 router.post('/logout', authenticate, logout);
+router.post('/prelogin', prelogin);
+router.get('/google', googleAuth);
+router.get('/google/callback', googleCallback);
+router.post('/google/complete', googleSetupComplete);
 
 export default router;

@@ -17,6 +17,11 @@ export interface CustomField {
   type: 'text' | 'password' | 'url' | 'email';
 }
 
+export interface PasswordHistoryEntry {
+  password: string;
+  changedAt: string; // ISO date
+}
+
 export interface ItemPayload {
   title: string;
   // Login
@@ -35,6 +40,8 @@ export interface ItemPayload {
   favorite?: boolean;
   customFields?: CustomField[];
   passwordChangedAt?: string; // ISO date string — for age tracking
+  totpSecret?: string; // base32 TOTP secret
+  passwordHistory?: PasswordHistoryEntry[]; // last 5 old passwords
 }
 
 export interface DecryptedVaultItem {
@@ -62,6 +69,8 @@ interface FormState {
   category: string;
   favorite: boolean;
   customFields: CustomField[];
+  totpSecret: string;
+  originalPassword: string; // (tracks original to detect changes)
 }
 
 const EMPTY_FORM: FormState = {
@@ -79,6 +88,8 @@ const EMPTY_FORM: FormState = {
   category: '',
   favorite: false,
   customFields: [],
+  totpSecret: '',
+  originalPassword: '',
 };
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -107,6 +118,7 @@ function buildPayload(form: FormState, isNewPassword = false): ItemPayload {
       notes: form.notes || undefined,
       // Track when password was set/changed
       passwordChangedAt: isNewPassword ? new Date().toISOString() : undefined,
+      totpSecret: form.totpSecret || undefined,
     };
   }
   if (form.type === 'note') {
@@ -150,6 +162,13 @@ export default function Dashboard() {
     session?.email?.split('@')[0] ?? 'User'
   );
   const [profilePhoto, setProfilePhoto] = useState<string | null>(null);
+
+  const [shareModalItem, setShareModalItem] =
+    useState<DecryptedVaultItem | null>(null);
+  const [shareLink, setShareLink] = useState('');
+  const [shareExpiry, setShareExpiry] = useState(24);
+  const [shareLoading, setShareLoading] = useState(false);
+  const [shareCopied, setShareCopied] = useState(false);
 
   // useEffect after existing useEffect:
   useEffect(() => {
@@ -268,6 +287,8 @@ export default function Dashboard() {
       category: item.category ?? '',
       favorite: item.payload.favorite ?? false,
       customFields: item.payload.customFields ?? [],
+      totpSecret: item.payload.totpSecret ?? '',
+      originalPassword: item.payload.password ?? '', // save original to detect changes
     });
     setEditingId(item.id);
     setFormError('');
@@ -289,10 +310,37 @@ export default function Dashboard() {
       return setFormError('Password is required.');
     if (!vaultKey) return;
 
+    const payloadData = buildPayload(form, !editingId);
+
+    // Handle password history for login item edits
+    if (editingId && form.type === 'login') {
+      const originalItem = items.find((i) => i.id === editingId);
+      const passwordChanged =
+        form.originalPassword && form.password !== form.originalPassword;
+
+      if (passwordChanged && originalItem) {
+        // Push old password to history
+        const oldEntry: PasswordHistoryEntry = {
+          password: form.originalPassword,
+          changedAt:
+            originalItem.payload.passwordChangedAt ?? new Date().toISOString(),
+        };
+        const oldHistory = originalItem.payload.passwordHistory ?? [];
+        payloadData.passwordHistory = [oldEntry, ...oldHistory].slice(0, 5);
+        payloadData.passwordChangedAt = new Date().toISOString();
+      } else {
+        // Password unchanged — preserve existing history
+        payloadData.passwordHistory = originalItem?.payload.passwordHistory;
+        payloadData.passwordChangedAt = originalItem?.payload.passwordChangedAt;
+      }
+    } else if (!editingId && form.type === 'login') {
+      // New item — set initial date
+      payloadData.passwordChangedAt = new Date().toISOString();
+    }
+
     setSaving(true);
     setFormError('');
     try {
-      const payloadData = buildPayload(form, !editingId); // true = new item, false = edit
       const { ciphertext: encryptedData, iv } = await encrypt(
         JSON.stringify(payloadData),
         vaultKey
@@ -351,6 +399,49 @@ export default function Dashboard() {
       setItems((prev) => prev.filter((i) => i.id !== id));
     } catch {
       setPageError('Failed to delete item.');
+    }
+  }
+
+  async function handleShare(item: DecryptedVaultItem) {
+    setShareModalItem(item);
+    setShareLink('');
+    setShareCopied(false);
+  }
+
+  async function generateShareLink() {
+    if (!shareModalItem || !vaultKey) return;
+    setShareLoading(true);
+    try {
+      // Generate a random one-time key (NOT the vault key)
+      const shareKey = crypto.getRandomValues(new Uint8Array(32));
+
+      // Encrypt item payload with the share key
+      const dataToShare = {
+        title: shareModalItem.payload.title,
+        username: shareModalItem.payload.username,
+        password: shareModalItem.payload.password,
+        url: shareModalItem.payload.url,
+        notes: shareModalItem.payload.notes,
+      };
+      const { ciphertext, iv } = await encrypt(
+        JSON.stringify(dataToShare),
+        shareKey as Uint8Array<ArrayBuffer>
+      );
+
+      // Send encrypted payload to server
+      const { data } = await api.post('/api/share', {
+        encryptedPayload: JSON.stringify({ ciphertext, iv }),
+        expiresInHours: shareExpiry,
+      });
+
+      // Key goes in URL fragment (NEVER sent to server)
+      const keyB64 = btoa(String.fromCharCode(...shareKey));
+      const baseUrl = window.location.origin;
+      setShareLink(`${baseUrl}/share/${data.id}#${keyB64}`);
+    } catch {
+      alert('Failed to create share link.');
+    } finally {
+      setShareLoading(false);
     }
   }
 
@@ -578,6 +669,7 @@ export default function Dashboard() {
                   onEdit={() => openEdit(item)}
                   onDelete={() => handleDelete(item.id)}
                   onToggleFavorite={() => handleToggleFavorite(item)}
+                  onShare={() => handleShare(item)}
                 />
               ))}
             </div>
@@ -744,6 +836,40 @@ export default function Dashboard() {
                     onChange={(v) => setForm((f) => ({ ...f, url: v }))}
                     placeholder="https://github.com"
                   />
+                  {/* TOTP Secret — optional */}
+                  <div>
+                    <label
+                      className="block text-xs font-medium mb-1"
+                      style={{ color: 'var(--text-secondary)' }}
+                    >
+                      Two-factor secret (optional)
+                    </label>
+                    <input
+                      type="text"
+                      value={form.totpSecret}
+                      onChange={(e) =>
+                        setForm((f) => ({
+                          ...f,
+                          totpSecret: e.target.value.trim(),
+                        }))
+                      }
+                      aria-label="TOTP secret key"
+                      className="w-full rounded-lg px-3 py-2 text-sm outline-none font-mono vx-input"
+                      style={{
+                        background: 'var(--bg-elevated)',
+                        border: '0.5px solid var(--border)',
+                        color: 'var(--text-primary)',
+                      }}
+                      placeholder="Base32 secret, e.g. JBSWY3DPEHPK3PXP"
+                    />
+                    <p
+                      className="text-xs mt-1"
+                      style={{ color: 'var(--text-muted)' }}
+                    >
+                      From your 2FA setup page — click "Can't scan QR?" to
+                      reveal the secret key
+                    </p>
+                  </div>
                 </>
               )}
 
@@ -902,6 +1028,7 @@ export default function Dashboard() {
                   <div key={field.id} className="flex gap-2 mb-2">
                     <input
                       type="text"
+                      aria-label="Custom field type"
                       value={field.label}
                       onChange={(e) =>
                         setForm((f) => ({
@@ -1016,6 +1143,176 @@ export default function Dashboard() {
                 </button>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {shareModalItem && (
+        <div
+          className="fixed inset-0 flex items-center justify-center px-4 z-50"
+          style={{ background: 'rgba(0,0,0,0.7)' }}
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              setShareModalItem(null);
+              setShareLink('');
+            }
+          }}
+        >
+          <div
+            className="w-full max-w-md rounded-2xl p-6"
+            style={{
+              background: 'var(--bg-surface)',
+              border: '0.5px solid var(--border)',
+            }}
+          >
+            <div className="flex items-center justify-between mb-4">
+              <h2
+                className="text-sm font-medium"
+                style={{ color: 'var(--text-primary)' }}
+              >
+                Share "{shareModalItem.payload.title}"
+              </h2>
+              <button
+                onClick={() => {
+                  setShareModalItem(null);
+                  setShareLink('');
+                }}
+                aria-label="Close"
+                className="w-7 h-7 rounded-lg flex items-center justify-center vx-btn"
+                style={{
+                  color: 'var(--text-muted)',
+                  background: 'var(--bg-elevated)',
+                }}
+              >
+                ✕
+              </button>
+            </div>
+
+            <div
+              className="rounded-lg p-3 mb-4 text-xs"
+              style={{
+                background: 'var(--accent-subtle)',
+                color: 'var(--accent)',
+              }}
+            >
+              🔒 Zero-knowledge share — the encryption key is in the link only.
+              The server never sees the password.
+            </div>
+
+            {!shareLink ? (
+              <div className="flex flex-col gap-3">
+                <div>
+                  <label
+                    className="block text-xs font-medium mb-1.5"
+                    style={{ color: 'var(--text-secondary)' }}
+                  >
+                    Link expires after
+                  </label>
+                  <div className="flex gap-2">
+                    {[1, 24, 72, 168].map((h) => (
+                      <button
+                        key={h}
+                        onClick={() => setShareExpiry(h)}
+                        className="flex-1 py-2 rounded-lg text-xs font-medium vx-btn"
+                        style={{
+                          background:
+                            shareExpiry === h
+                              ? 'var(--accent)'
+                              : 'var(--bg-elevated)',
+                          color:
+                            shareExpiry === h
+                              ? '#fff'
+                              : 'var(--text-secondary)',
+                          border: '0.5px solid var(--border)',
+                        }}
+                      >
+                        {h === 1
+                          ? '1h'
+                          : h === 24
+                            ? '24h'
+                            : h === 72
+                              ? '3d'
+                              : '7d'}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div
+                  className="rounded-lg p-3"
+                  style={{
+                    background: 'var(--bg-elevated)',
+                    border: '0.5px solid var(--border)',
+                  }}
+                >
+                  <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                    Sharing
+                  </p>
+                  <p
+                    className="text-sm font-medium mt-0.5"
+                    style={{ color: 'var(--text-primary)' }}
+                  >
+                    {shareModalItem.payload.username} • ••••••••••••
+                  </p>
+                </div>
+
+                <button
+                  onClick={generateShareLink}
+                  disabled={shareLoading}
+                  className="w-full rounded-lg py-2.5 text-sm font-medium vx-btn-accent"
+                  style={{
+                    background: 'var(--accent)',
+                    color: '#fff',
+                    opacity: shareLoading ? 0.7 : 1,
+                  }}
+                >
+                  {shareLoading ? 'Generating...' : 'Generate secure link'}
+                </button>
+              </div>
+            ) : (
+              <div className="flex flex-col gap-3">
+                <div
+                  className="rounded-lg p-3"
+                  style={{
+                    background: 'var(--bg-elevated)',
+                    border: '0.5px solid var(--border)',
+                    wordBreak: 'break-all',
+                  }}
+                >
+                  <p
+                    className="text-xs font-mono"
+                    style={{ color: 'var(--text-secondary)', fontSize: 11 }}
+                  >
+                    {shareLink}
+                  </p>
+                </div>
+
+                <button
+                  onClick={async () => {
+                    await navigator.clipboard.writeText(shareLink);
+                    setShareCopied(true);
+                    setTimeout(() => setShareCopied(false), 3000);
+                  }}
+                  className="w-full rounded-lg py-2.5 text-sm font-medium vx-btn-ghost"
+                  style={{
+                    border: '0.5px solid var(--border)',
+                    color: shareCopied
+                      ? 'var(--accent)'
+                      : 'var(--text-primary)',
+                  }}
+                >
+                  {shareCopied ? '✓ Copied!' : 'Copy link'}
+                </button>
+
+                <p
+                  className="text-xs text-center"
+                  style={{ color: 'var(--text-muted)' }}
+                >
+                  Link works once only · expires in {shareExpiry}h · anyone with
+                  the link can view
+                </p>
+              </div>
+            )}
           </div>
         </div>
       )}

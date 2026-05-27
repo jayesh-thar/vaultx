@@ -1,10 +1,12 @@
 import { Request, Response } from 'express';
+// REPLACE the two broken import lines with:
 import {
   registerUser,
   loginUser,
   refreshSession,
   logoutUser,
   changeUserPassword,
+  getPreloginData,
 } from './auth.service';
 import { registerSchema, loginSchema } from './auth.validation';
 
@@ -67,6 +69,20 @@ export async function login(req: Request, res: Response): Promise<void> {
       return;
     }
     res.status(500).json({ error: 'Login failed' });
+  }
+}
+
+export async function prelogin(req: Request, res: Response): Promise<void> {
+  try {
+    const { email } = req.body;
+    const data = await getPreloginData(email);
+    res.json(data);
+  } catch {
+    // Return plausible fake to prevent email enumeration
+    res.json({
+      kdfSalt: 'notfound',
+      kdfParams: { iterations: 600000, memory: 0, parallelism: 1 },
+    });
   }
 }
 

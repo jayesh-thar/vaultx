@@ -140,6 +140,19 @@ export async function loginUser(input: LoginInput, deviceInfo: object) {
   };
 }
 
+// for the unlock flow — gets kdfSalt without exposing which emails exist
+export async function getPreloginData(email: string) {
+  const result = await pool.query(
+    'SELECT kdf_salt, kdf_params FROM users WHERE email = $1',
+    [email]
+  );
+  if (result.rows.length === 0) throw new Error('USER_NOT_FOUND');
+  return {
+    kdfSalt: result.rows[0].kdf_salt as string,
+    kdfParams: result.rows[0].kdf_params as object,
+  };
+}
+
 // ─── Refresh ──────────────────────────────────────────────────────────────────
 export async function refreshSession(refreshToken: string) {
   let payload;

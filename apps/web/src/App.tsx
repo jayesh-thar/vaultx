@@ -8,6 +8,9 @@ import Dashboard from './pages/Dashboard';
 import Settings from './pages/Settings';
 import { useEffect } from 'react';
 import HealthDashboard from './pages/HealthDashboard';
+import ShareView from './pages/ShareView';
+import GoogleSetup from './pages/GoogleSetup';
+import GoogleUnlock from './pages/GoogleUnlock';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { userId, vaultKey } = useVaultStore();
@@ -54,7 +57,6 @@ export default function App() {
             </ProtectedRoute>
           }
         />
-        <Route path="*" element={<Navigate to="/login" replace />} />
         <Route
           path="/health"
           element={
@@ -63,6 +65,13 @@ export default function App() {
             </ProtectedRoute>
           }
         />
+        <Route path="/share/:id" element={<ShareView />} />
+        <Route path="/auth/google/setup" element={<GoogleSetup />} />{' '}
+        {/* ADD - next section */}
+        <Route path="/auth/google/unlock" element={<GoogleUnlock />} />{' '}
+        {/* ADD - next section */}
+        <Route path="*" element={<Navigate to="/login" replace />} />{' '}
+        {/* ALWAYS LAST */}
       </Routes>
     </BrowserRouter>
   );

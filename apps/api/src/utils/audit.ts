@@ -5,8 +5,10 @@ type AuditEvent =
   | 'login_success'
   | 'login_failed'
   | 'logout'
-  | 'vault_access'
-  | 'token_reuse';
+  | 'token_reuse'
+  | 'google_register_started'
+  | 'google_register_complete'
+  | 'password_changed';
 
 export interface AuditMeta {
   ip?: string;
