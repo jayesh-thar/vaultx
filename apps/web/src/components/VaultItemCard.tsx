@@ -35,11 +35,74 @@ function getPasswordStrength(p: string) {
   return { label: 'Strong', color: '#10B981', bars: 4 };
 }
 
+// HistoryRow helper component
+function HistoryRow({ entry }: { entry: PasswordHistoryEntry }) {
+  const [show, setShow] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [age, setAge] = useState('');
+
+  useEffect(() => {
+    // Date.now() is safe in useEffect — not called during render
+    const now = Date.now();
+    const days = Math.floor(
+      (now - new Date(entry.changedAt).getTime()) / 86400000
+    );
+    if (days === 0) setAge('Today');
+    else if (days === 1) setAge('1 day ago');
+    else if (days < 30) setAge(`${days}d ago`);
+    else if (days < 365) setAge(`${Math.floor(days / 30)}mo ago`);
+    else setAge(`${Math.floor(days / 365)}y ago`);
+  }, [entry.changedAt]);
+
+  return (
+    <div
+      className="flex items-center gap-2 px-3 py-2"
+      style={{ borderBottom: '0.5px solid var(--border)' }}
+    >
+      <span
+        className="flex-1 text-xs font-mono"
+        style={{ color: 'var(--text-secondary)', letterSpacing: show ? 0 : 3 }}
+      >
+        {show ? entry.password : '••••••••••'}
+      </span>
+      <span
+        className="text-xs"
+        style={{ color: 'var(--text-muted)', flexShrink: 0 }}
+      >
+        {age}
+      </span>
+      <button
+        onClick={() => setShow((p) => !p)}
+        className="text-xs vx-btn"
+        style={{ color: 'var(--text-muted)', flexShrink: 0 }}
+      >
+        {show ? 'Hide' : 'Show'}
+      </button>
+      <button
+        onClick={async () => {
+          await navigator.clipboard.writeText(entry.password);
+          setCopied(true);
+          setTimeout(() => setCopied(false), 2000);
+        }}
+        aria-label="Copy old password"
+        className="text-xs vx-btn"
+        style={{
+          color: copied ? 'var(--accent)' : 'var(--text-muted)',
+          flexShrink: 0,
+        }}
+      >
+        {copied ? '✓' : 'Copy'}
+      </button>
+    </div>
+  );
+}
+
 export default function VaultItemCard({
   item,
   onEdit,
   onDelete,
   onToggleFavorite,
+  onShare,
 }: Props) {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [copyCountdown, setCopyCountdown] = useState<number | null>(null);
@@ -545,66 +608,4 @@ export default function VaultItemCard({
       )}
     </div>
   );
-
-  // HistoryRow helper component
-  function HistoryRow({ entry }: { entry: PasswordHistoryEntry }) {
-    const [show, setShow] = useState(false);
-    const [copied, setCopied] = useState(false);
-
-    const age = useMemo(() => {
-      const days = Math.floor(
-        (Date.now() - new Date(entry.changedAt).getTime()) / 86400000
-      );
-      if (days === 0) return 'Today';
-      if (days === 1) return '1 day ago';
-      if (days < 30) return `${days} days ago`;
-      if (days < 365) return `${Math.floor(days / 30)}mo ago`;
-      return `${Math.floor(days / 365)}y ago`;
-    }, [entry.changedAt]);
-
-    return (
-      <div
-        className="flex items-center gap-2 px-3 py-2"
-        style={{ borderBottom: '0.5px solid var(--border)' }}
-      >
-        <span
-          className="flex-1 text-xs font-mono"
-          style={{
-            color: 'var(--text-secondary)',
-            letterSpacing: show ? 0 : 3,
-          }}
-        >
-          {show ? entry.password : '••••••••••'}
-        </span>
-        <span
-          className="text-xs"
-          style={{ color: 'var(--text-muted)', flexShrink: 0 }}
-        >
-          {age}
-        </span>
-        <button
-          onClick={() => setShow((p) => !p)}
-          className="text-xs vx-btn"
-          style={{ color: 'var(--text-muted)', flexShrink: 0 }}
-        >
-          {show ? 'Hide' : 'Show'}
-        </button>
-        <button
-          onClick={async () => {
-            await navigator.clipboard.writeText(entry.password);
-            setCopied(true);
-            setTimeout(() => setCopied(false), 2000);
-          }}
-          aria-label="Copy old password"
-          className="text-xs vx-btn"
-          style={{
-            color: copied ? 'var(--accent)' : 'var(--text-muted)',
-            flexShrink: 0,
-          }}
-        >
-          {copied ? '✓' : 'Copy'}
-        </button>
-      </div>
-    );
-  }
 }

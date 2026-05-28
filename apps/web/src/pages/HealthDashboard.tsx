@@ -205,6 +205,16 @@ export default function HealthDashboard() {
 
     setItems(analyzed);
     setStatus('done');
+
+    const breachedTitles = analyzed
+      .filter((i) => i.isBreached)
+      .map((i) => i.title);
+    if (breachedTitles.length > 0) {
+      // Tell backend to send breach alert email
+      api
+        .post('/api/vault/breach-alert', { sites: breachedTitles })
+        .catch(() => {});
+    }
   }, [vaultKey]);
 
   useEffect(() => {

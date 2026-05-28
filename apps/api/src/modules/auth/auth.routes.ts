@@ -6,6 +6,7 @@ import {
   logout,
   changePassword,
   prelogin,
+  deleteAccount,
 } from './auth.controller';
 import { authenticate } from '../../middleware/authenticate';
 import { validateEmailDomain } from '../../middleware/emailValidator';
@@ -16,6 +17,7 @@ import {
 } from '../../middleware/rateLimiter';
 import { hibpCheck } from '../../middleware/hibp';
 import { googleAuth, googleCallback, googleSetupComplete } from './auth.google';
+import { sendOTP, verifyOTP } from './auth.otp';
 
 const router = Router();
 
@@ -34,5 +36,8 @@ router.post('/prelogin', prelogin);
 router.get('/google', googleAuth);
 router.get('/google/callback', googleCallback);
 router.post('/google/complete', googleSetupComplete);
+router.delete('/account', authenticate, deleteAccount);
+router.post('/otp/send', authenticate, sendOTP);
+router.post('/otp/verify', authenticate, verifyOTP);
 
 export default router;

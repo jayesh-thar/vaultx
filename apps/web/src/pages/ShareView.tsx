@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 
 interface SharedData {
@@ -18,11 +18,14 @@ export default function ShareView() {
   const [showPassword, setShowPassword] = useState(false);
   const [copied, setCopied] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
+  const fetchedRef = useRef(false);
 
   useEffect(() => {
+    if (fetchedRef.current) return; // ← prevent double-fetch in StrictMode
+    fetchedRef.current = true;
+
     async function load() {
       try {
-        // Extract key from URL fragment
         const fragment = window.location.hash.slice(1);
         if (!fragment) {
           setState('error');
@@ -30,7 +33,6 @@ export default function ShareView() {
           return;
         }
 
-        // Fetch encrypted payload
         const res = await fetch(
           `${import.meta.env.VITE_API_URL ?? 'http://localhost:5000'}/api/share/${id}`
         );
@@ -41,19 +43,15 @@ export default function ShareView() {
           return;
         }
         const { encryptedPayload } = await res.json();
-
         setState('decrypting');
 
-        // Reconstruct key from base64 fragment
         const keyBytes = Uint8Array.from(atob(fragment), (c) =>
           c.charCodeAt(0)
         ) as Uint8Array<ArrayBuffer>;
-
-        // Decrypt
         const { ciphertext, iv } = JSON.parse(encryptedPayload);
         const cryptoKey = await crypto.subtle.importKey(
           'raw',
-          keyBytes,
+          keyBytes.buffer as ArrayBuffer,
           { name: 'AES-GCM' },
           false,
           ['decrypt']
@@ -66,12 +64,11 @@ export default function ShareView() {
           cryptoKey,
           Uint8Array.from(atob(ciphertext), (c) => c.charCodeAt(0))
         );
-        const text = new TextDecoder().decode(decrypted);
-        setData(JSON.parse(text));
+        setData(JSON.parse(new TextDecoder().decode(decrypted)));
         setState('done');
       } catch {
         setState('error');
-        setErrorMsg('Failed to decrypt. The link may be corrupted.');
+        setErrorMsg('Failed to decrypt. The link may be corrupted or expired.');
       }
     }
     if (id) load();

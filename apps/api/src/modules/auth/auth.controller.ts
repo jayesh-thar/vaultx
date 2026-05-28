@@ -7,6 +7,7 @@ import {
   logoutUser,
   changeUserPassword,
   getPreloginData,
+  deleteUserAccount,
 } from './auth.service';
 import { registerSchema, loginSchema } from './auth.validation';
 
@@ -126,7 +127,26 @@ export async function changePassword(
         return;
       }
     }
+    if (err instanceof Error && err.message === 'OTP_NOT_VERIFIED') {
+      res
+        .status(403)
+        .json({ error: 'Please verify your identity with OTP first' });
+      return;
+    }
     res.status(500).json({ error: 'Failed to change password' });
+  }
+}
+
+export async function deleteAccount(
+  req: Request,
+  res: Response
+): Promise<void> {
+  try {
+    await deleteUserAccount(req.user!.userId);
+    res.clearCookie('refreshToken');
+    res.json({ message: 'Account deleted' });
+  } catch {
+    res.status(500).json({ error: 'Failed to delete account' });
   }
 }
 

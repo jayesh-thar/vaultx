@@ -61,12 +61,10 @@ export async function validateEmailDomain(
 
   // Check against known disposable domains
   if (BLOCKED_DOMAINS.has(domain)) {
-    res
-      .status(400)
-      .json({
-        error:
-          'Disposable email addresses are not allowed. Please use a real email.',
-      });
+    res.status(400).json({
+      error:
+        'Disposable email addresses are not allowed. Please use a real email.',
+    });
     return;
   }
 
@@ -80,8 +78,9 @@ export async function validateEmailDomain(
       return;
     }
   } catch {
-    // DNS lookup failed — domain might not exist
-    res.status(400).json({ error: 'Email domain is invalid or unreachable.' });
+    // DNS lookup failed — fail open. Don't block valid emails due to DNS issues.
+    // The disposable domain list already handles the most common temp mail services.
+    next();
     return;
   }
 

@@ -99,6 +99,8 @@ export default function Register() {
           e.response?.data?.error ??
           'Registration failed. Please try again.'
       );
+    } finally {
+      setLoading(false); // ← ADD: always reset, even on error
     }
   }
 

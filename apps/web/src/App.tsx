@@ -11,6 +11,8 @@ import HealthDashboard from './pages/HealthDashboard';
 import ShareView from './pages/ShareView';
 import GoogleSetup from './pages/GoogleSetup';
 import GoogleUnlock from './pages/GoogleUnlock';
+import { ToastContainer } from './components/Toast';
+import ErrorBoundary from './components/ErrorBoundary';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { userId, vaultKey } = useVaultStore();
@@ -36,43 +38,52 @@ export default function App() {
   }, []);
 
   return (
-    <BrowserRouter>
-      <Routes>
-        <Route path="/login" element={<Login />} />
-        <Route path="/register" element={<Register />} />
-        <Route path="/unlock" element={<Unlock />} />
-        <Route
-          path="/dashboard"
-          element={
-            <ProtectedRoute>
-              <Dashboard />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/settings"
-          element={
-            <ProtectedRoute>
-              <Settings />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/health"
-          element={
-            <ProtectedRoute>
-              <HealthDashboard />
-            </ProtectedRoute>
-          }
-        />
-        <Route path="/share/:id" element={<ShareView />} />
-        <Route path="/auth/google/setup" element={<GoogleSetup />} />{' '}
-        {/* ADD - next section */}
-        <Route path="/auth/google/unlock" element={<GoogleUnlock />} />{' '}
-        {/* ADD - next section */}
-        <Route path="*" element={<Navigate to="/login" replace />} />{' '}
-        {/* ALWAYS LAST */}
-      </Routes>
-    </BrowserRouter>
+    <>
+      <BrowserRouter>
+        <Routes>
+          <Route path="/login" element={<Login />} />
+          <Route path="/register" element={<Register />} />
+          <Route path="/unlock" element={<Unlock />} />
+          <Route
+            path="/dashboard"
+            element={
+              <ProtectedRoute>
+                <ErrorBoundary>
+                  <Dashboard />
+                </ErrorBoundary>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/settings"
+            element={
+              <ProtectedRoute>
+                <ErrorBoundary>
+                  <Settings />
+                </ErrorBoundary>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/health"
+            element={
+              <ProtectedRoute>
+                <ErrorBoundary>
+                  <HealthDashboard />
+                </ErrorBoundary>
+              </ProtectedRoute>
+            }
+          />
+          <Route path="/share/:id" element={<ShareView />} />
+          <Route path="/auth/google/setup" element={<GoogleSetup />} />{' '}
+          {/* ADD - next section */}
+          <Route path="/auth/google/unlock" element={<GoogleUnlock />} />{' '}
+          {/* ADD - next section */}
+          <Route path="*" element={<Navigate to="/login" replace />} />{' '}
+          {/* ALWAYS LAST */}
+        </Routes>
+      </BrowserRouter>
+      <ToastContainer />
+    </>
   );
 }

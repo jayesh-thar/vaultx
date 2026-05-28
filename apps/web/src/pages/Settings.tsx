@@ -12,6 +12,8 @@ import {
 import { decryptBytes, encryptBytes, encrypt } from '../lib/crypto';
 import { parseCSV, type ParsedItem } from '../lib/csvImport';
 import { useVaultStore } from '../store/useVaultStore';
+import { toast } from '../lib/toast';
+import { clearStoredSession } from '../lib/storage';
 
 type Tab = 'profile' | 'security' | 'appearance' | 'data';
 
@@ -572,46 +574,85 @@ function ProfileTab({
 // ─── Security Tab ─────────────────────────────────────────────────────────────
 
 function SecurityTab({ session }: { session: ReturnType<typeof loadSession> }) {
-  const [current, setCurrent] = useState('');
+  const { vaultKey } = useVaultStore();
+
+  // OTP state
+  const [otpStep, setOtpStep] = useState<'initial' | 'sent' | 'verified'>(
+    'initial'
+  );
+  const [otpCode, setOtpCode] = useState('');
+  const [maskedEmail, setMaskedEmail] = useState('');
+  const [otpLoading, setOtpLoading] = useState(false);
+  const [otpError, setOtpError] = useState('');
+
+  // Password state (unlocked only after OTP verified)
+  const [currentPass, setCurrentPass] = useState('');
   const [newPass, setNewPass] = useState('');
   const [confirm, setConfirm] = useState('');
   const [showCurrent, setShowCurrent] = useState(false);
   const [showNew, setShowNew] = useState(false);
-  const [status, setStatus] = useState<
-    'idle' | 'loading' | 'success' | 'error'
-  >('idle');
+  const [saving, setSaving] = useState(false);
+  const [success, setSuccess] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
 
   const strength = newPass ? getPasswordStrength(newPass) : null;
   const mismatch = confirm.length > 0 && confirm !== newPass;
+  const locked = otpStep !== 'verified';
+
+  async function handleSendOTP() {
+    setOtpLoading(true);
+    setOtpError('');
+    try {
+      const { data } = await api.post('/api/auth/otp/send');
+      setMaskedEmail(data.maskedEmail);
+      setOtpStep('sent');
+    } catch (e: any) {
+      setOtpError(e.response?.data?.error ?? 'Failed to send OTP');
+    } finally {
+      setOtpLoading(false);
+    }
+  }
+
+  async function handleVerifyOTP() {
+    if (otpCode.length !== 6) return setOtpError('Enter the 6-digit code');
+    setOtpLoading(true);
+    setOtpError('');
+    try {
+      await api.post('/api/auth/otp/verify', { code: otpCode });
+      setOtpStep('verified');
+      setOtpError('');
+    } catch (e: any) {
+      setOtpError(e.response?.data?.error ?? 'Invalid code');
+    } finally {
+      setOtpLoading(false);
+    }
+  }
 
   async function handleChangePassword() {
     setErrorMsg('');
-    if (!current || !newPass || !confirm)
-      return setErrorMsg('All fields are required.');
+    if (!currentPass)
+      return setErrorMsg(
+        'Enter your current password (needed to re-encrypt your vault).'
+      );
+    if (!newPass || !confirm)
+      return setErrorMsg('Fill in all password fields.');
     if (newPass !== confirm) return setErrorMsg('New passwords do not match.');
     if (newPass.length < 12)
       return setErrorMsg('New password must be at least 12 characters.');
-    if (!session) return setErrorMsg('Session not found. Please log in again.');
+    if (!session) return setErrorMsg('Session not found.');
 
-    setStatus('loading');
+    setSaving(true);
     try {
-      const { authKey: currentAuthKey, vaultKey: currentDerivedKey } =
-        await deriveKeys(current, session.kdfSalt, session.kdfParams);
-
-      // Verify current password
-      await api.post('/api/auth/login', {
-        email: session.email,
-        authKey: toHex(currentAuthKey),
-      });
-
-      // Decrypt master key with current derived key
+      const { vaultKey: currentDerivedKey } = await deriveKeys(
+        currentPass,
+        session.kdfSalt,
+        session.kdfParams
+      );
       const masterKey = await decryptBytes(
         { ciphertext: session.vaultKeyEnc, iv: session.vaultKeyIv },
         currentDerivedKey
       );
 
-      // Derive new keys
       const newKdfSalt = await generateSalt();
       const newAuthSalt = await generateSalt();
       const { authKey: newAuthKey, vaultKey: newDerivedKey } = await deriveKeys(
@@ -619,13 +660,10 @@ function SecurityTab({ session }: { session: ReturnType<typeof loadSession> }) {
         newKdfSalt,
         DEFAULT_KDF_PARAMS
       );
-
-      // Re-encrypt master key with new derived key
       const { ciphertext: newVaultKeyEnc, iv: newVaultKeyIv } =
         await encryptBytes(masterKey, newDerivedKey);
 
       await api.put('/api/auth/change-password', {
-        currentAuthKey: toHex(currentAuthKey),
         newAuthKey: toHex(newAuthKey),
         newAuthSalt,
         newKdfSalt,
@@ -634,31 +672,20 @@ function SecurityTab({ session }: { session: ReturnType<typeof loadSession> }) {
         newVaultKeyIv,
       });
 
-      // Update localStorage session with new KDF data
-      const { loadSession, saveSession } = await import('../lib/storage');
-      const currentSession = loadSession();
-      if (currentSession) {
-        saveSession({
-          ...currentSession,
-          kdfSalt: newKdfSalt,
-          kdfParams: DEFAULT_KDF_PARAMS,
-          vaultKeyEnc: newVaultKeyEnc,
-          vaultKeyIv: newVaultKeyIv,
-        });
-      }
-
-      setStatus('success');
-      setCurrent('');
+      setSuccess(true);
+      setCurrentPass('');
       setNewPass('');
       setConfirm('');
-    } catch (err) {
-      const e = err as AxiosError<{ message?: string }>;
-      if (e.response?.status === 401) {
-        setErrorMsg('Current password is incorrect.');
-      } else {
-        setErrorMsg(e.response?.data?.message ?? 'Failed. Please try again.');
-      }
-      setStatus('error');
+      setOtpStep('initial');
+      setOtpCode('');
+    } catch (e: any) {
+      setErrorMsg(
+        e.response?.data?.error ??
+          e.response?.data?.message ??
+          'Failed. Try again.'
+      );
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -674,7 +701,7 @@ function SecurityTab({ session }: { session: ReturnType<typeof loadSession> }) {
       <Card>
         <SectionLabel>Change Master Password</SectionLabel>
 
-        {status === 'success' && (
+        {success && (
           <div
             className="rounded-lg px-3 py-2.5 text-sm flex items-center gap-2"
             style={{ background: '#0D2818', color: '#10B981' }}
@@ -687,7 +714,7 @@ function SecurityTab({ session }: { session: ReturnType<typeof loadSession> }) {
                 strokeLinecap="round"
               />
             </svg>
-            Password changed successfully.
+            Password changed. All other sessions were signed out.
           </div>
         )}
 
@@ -700,20 +727,141 @@ function SecurityTab({ session }: { session: ReturnType<typeof loadSession> }) {
           </div>
         )}
 
-        <div className="flex flex-col gap-3">
-          {/* Current password */}
+        {/* Step 1: OTP verification */}
+        <div
+          className="flex flex-col gap-3 pb-4"
+          style={{ borderBottom: '0.5px solid var(--border)' }}
+        >
+          <div className="flex items-center justify-between">
+            <div>
+              <p
+                className="text-sm font-medium"
+                style={{ color: 'var(--text-primary)' }}
+              >
+                Step 1 — Verify your identity
+              </p>
+              <p
+                className="text-xs mt-0.5"
+                style={{ color: 'var(--text-muted)' }}
+              >
+                We'll send a 6-digit code to your email
+              </p>
+            </div>
+            {otpStep === 'verified' && (
+              <span
+                className="text-xs px-2 py-1 rounded-lg"
+                style={{ background: '#0D2818', color: '#10B981' }}
+              >
+                ✓ Verified
+              </span>
+            )}
+          </div>
+
+          {otpStep === 'initial' && (
+            <button
+              onClick={handleSendOTP}
+              disabled={otpLoading}
+              className="self-start px-4 py-2 rounded-lg text-sm font-medium vx-btn-ghost"
+              style={{
+                border: '0.5px solid var(--border)',
+                color: 'var(--text-primary)',
+                opacity: otpLoading ? 0.7 : 1,
+              }}
+            >
+              {otpLoading ? 'Sending...' : 'Get OTP'}
+            </button>
+          )}
+
+          {otpStep === 'sent' && (
+            <div className="flex flex-col gap-2">
+              <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                Code sent to{' '}
+                <strong style={{ color: 'var(--text-secondary)' }}>
+                  {maskedEmail}
+                </strong>
+              </p>
+              {otpError && (
+                <p className="text-xs" style={{ color: 'var(--danger)' }}>
+                  {otpError}
+                </p>
+              )}
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  maxLength={6}
+                  value={otpCode}
+                  onChange={(e) =>
+                    setOtpCode(e.target.value.replace(/\D/g, '').slice(0, 6))
+                  }
+                  placeholder="_ _ _ _ _ _"
+                  aria-label="OTP code"
+                  className="w-36 rounded-lg px-3 py-2 text-sm font-mono outline-none text-center vx-input tracking-widest"
+                  style={{
+                    background: 'var(--bg-elevated)',
+                    border: '0.5px solid var(--border)',
+                    color: 'var(--text-primary)',
+                    letterSpacing: 8,
+                  }}
+                />
+                <button
+                  onClick={handleVerifyOTP}
+                  disabled={otpLoading || otpCode.length !== 6}
+                  className="px-4 py-2 rounded-lg text-sm font-medium vx-btn-accent"
+                  style={{
+                    background: 'var(--accent)',
+                    color: '#fff',
+                    opacity: otpLoading || otpCode.length !== 6 ? 0.6 : 1,
+                  }}
+                >
+                  {otpLoading ? 'Verifying...' : 'Verify'}
+                </button>
+                <button
+                  onClick={handleSendOTP}
+                  disabled={otpLoading}
+                  className="px-3 py-2 rounded-lg text-xs vx-btn"
+                  style={{ color: 'var(--text-muted)' }}
+                >
+                  Resend
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Step 2: New password (locked until OTP verified) */}
+        <div
+          className="flex flex-col gap-3"
+          style={{
+            opacity: locked ? 0.4 : 1,
+            pointerEvents: locked ? 'none' : 'auto',
+          }}
+        >
+          <p
+            className="text-sm font-medium"
+            style={{ color: 'var(--text-primary)' }}
+          >
+            Step 2 — Set new password
+          </p>
+
+          {/* Current password (for vault key derivation) */}
           <div>
             <label
               className="block text-xs font-medium mb-1"
               style={{ color: 'var(--text-secondary)' }}
             >
-              Current password
+              Current password{' '}
+              <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>
+                (to decrypt your vault key)
+              </span>
             </label>
             <div className="relative">
               <input
                 type={showCurrent ? 'text' : 'password'}
-                value={current}
-                onChange={(e) => setCurrent(e.target.value)}
+                value={currentPass}
+                onChange={(e) => setCurrentPass(e.target.value)}
+                disabled={locked}
+                aria-label="Current password"
                 className="w-full rounded-lg px-3 py-2.5 text-sm outline-none pr-14 vx-input"
                 style={{
                   background: 'var(--bg-elevated)',
@@ -745,13 +893,15 @@ function SecurityTab({ session }: { session: ReturnType<typeof loadSession> }) {
                 type={showNew ? 'text' : 'password'}
                 value={newPass}
                 onChange={(e) => setNewPass(e.target.value)}
+                disabled={locked}
+                aria-label="New password"
+                placeholder="Minimum 12 characters"
                 className="w-full rounded-lg px-3 py-2.5 text-sm outline-none pr-14 vx-input"
                 style={{
                   background: 'var(--bg-elevated)',
                   border: '0.5px solid var(--border)',
                   color: 'var(--text-primary)',
                 }}
-                placeholder="Minimum 12 characters"
               />
               <button
                 type="button"
@@ -762,14 +912,13 @@ function SecurityTab({ session }: { session: ReturnType<typeof loadSession> }) {
                 {showNew ? 'Hide' : 'Show'}
               </button>
             </div>
-            {/* Strength bar */}
-            {newPass.length > 0 && strength && (
-              <div className="mt-2">
-                <div className="flex gap-1 mb-1">
+            {strength && newPass.length > 0 && (
+              <div className="mt-1.5">
+                <div className="flex gap-1 mb-0.5">
                   {[1, 2, 3, 4].map((i) => (
                     <div
                       key={i}
-                      className="h-1 flex-1 rounded-full transition-all duration-200"
+                      className="h-1 flex-1 rounded-full"
                       style={{
                         background:
                           i <= strength.bars ? strength.color : 'var(--border)',
@@ -784,7 +933,7 @@ function SecurityTab({ session }: { session: ReturnType<typeof loadSession> }) {
             )}
           </div>
 
-          {/* Confirm password */}
+          {/* Confirm */}
           <div>
             <label
               className="block text-xs font-medium mb-1"
@@ -796,6 +945,8 @@ function SecurityTab({ session }: { session: ReturnType<typeof loadSession> }) {
               type="password"
               value={confirm}
               onChange={(e) => setConfirm(e.target.value)}
+              disabled={locked}
+              aria-label="Confirm new password"
               className="w-full rounded-lg px-3 py-2.5 text-sm outline-none vx-input"
               style={{
                 background: 'var(--bg-elevated)',
@@ -814,17 +965,15 @@ function SecurityTab({ session }: { session: ReturnType<typeof loadSession> }) {
 
           <button
             onClick={handleChangePassword}
-            disabled={status === 'loading' || mismatch}
-            className="w-full rounded-lg py-2.5 text-sm font-medium mt-1 vx-btn-accent"
+            disabled={saving || locked || mismatch}
+            className="w-full rounded-lg py-2.5 text-sm font-medium vx-btn-accent"
             style={{
               background: 'var(--accent)',
               color: '#fff',
-              opacity: status === 'loading' || mismatch ? 0.6 : 1,
-              cursor:
-                status === 'loading' || mismatch ? 'not-allowed' : 'pointer',
+              opacity: saving || locked || mismatch ? 0.6 : 1,
             }}
           >
-            {status === 'loading' ? 'Changing password...' : 'Change password'}
+            {saving ? 'Changing password...' : 'Change password'}
           </button>
         </div>
       </Card>
@@ -1041,6 +1190,25 @@ function DataTab({ session }: { session: ReturnType<typeof loadSession> }) {
   const [csvProgress, setCsvProgress] = useState(0);
   const csvRef = useRef<HTMLInputElement>(null);
 
+  const { clearSession } = useVaultStore();
+  const navigate = useNavigate();
+
+  async function handleDeleteAccount() {
+    const confirmed = window.confirm(
+      'This permanently deletes your account and ALL vault data.\n\nThis cannot be undone. Type "delete" to confirm.'
+    );
+    if (!confirmed) return;
+    try {
+      await api.delete('/api/auth/account');
+      clearStoredSession();
+      clearSession();
+      navigate('/login');
+      toast('Account deleted', 'info');
+    } catch {
+      toast('Failed to delete account. Try again.', 'error');
+    }
+  }
+
   // ── ADD CSV handlers here ──
   async function handleCSVFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -1084,7 +1252,8 @@ function DataTab({ session }: { session: ReturnType<typeof loadSession> }) {
       setCsvProgress(i + 1);
     }
     setCsvState('done');
-    alert(`Imported ${csvItems.length} items.`);
+    toast(`Imported ${csvItems.length} items successfully`);
+
     setCsvState('idle');
   }
 
@@ -1371,9 +1540,7 @@ function DataTab({ session }: { session: ReturnType<typeof loadSession> }) {
               color: 'var(--danger)',
               border: '0.5px solid var(--danger)',
             }}
-            onClick={() =>
-              alert('Requires DELETE /api/auth/account on backend.')
-            }
+            onClick={handleDeleteAccount}
           >
             Delete account
           </button>

@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../lib/api';
 import { encrypt, decrypt } from '../lib/crypto';
@@ -152,6 +152,87 @@ function buildPayload(form: FormState, isNewPassword = false): ItemPayload {
 
 // ─── Component ───────────────────────────────────────────────────────────────
 
+function groupByCategory(items: DecryptedVaultItem[]) {
+  const groups = new Map<string, DecryptedVaultItem[]>();
+  for (const item of items) {
+    const cat = item.category?.trim() || 'Uncategorized';
+    if (!groups.has(cat)) groups.set(cat, []);
+    groups.get(cat)!.push(item);
+  }
+  return [...groups.entries()].sort(([a], [b]) => a.localeCompare(b));
+}
+
+function getPasswordStrengthBars(p: string): number {
+  if (p.length < 8) return 1;
+  let s = 0;
+  if (/[A-Z]/.test(p)) s++;
+  if (/[a-z]/.test(p)) s++;
+  if (/[0-9]/.test(p)) s++;
+  if (/[^A-Za-z0-9]/.test(p)) s++;
+  if (p.length < 12) return Math.min(s, 2);
+  return s <= 1 ? 2 : s === 2 ? 3 : 4;
+}
+
+function VaultHealthBanner({
+  items,
+  onDetails,
+}: {
+  items: DecryptedVaultItem[];
+  onDetails: () => void;
+}) {
+  const loginItems = items.filter(
+    (i) => i.type === 'login' && i.payload.password
+  );
+  if (loginItems.length === 0) return null;
+
+  const passMap = new Map<string, number>();
+  loginItems.forEach((i) => {
+    const p = i.payload.password!;
+    passMap.set(p, (passMap.get(p) ?? 0) + 1);
+  });
+  const weakCount = loginItems.filter(
+    (i) => getPasswordStrengthBars(i.payload.password!) <= 2
+  ).length;
+  const reusedCount = loginItems.filter(
+    (i) => (passMap.get(i.payload.password!) ?? 1) > 1
+  ).length;
+  if (weakCount === 0 && reusedCount === 0) return null;
+
+  const issues = [
+    weakCount > 0 && `${weakCount} weak`,
+    reusedCount > 0 && `${reusedCount} reused`,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+
+  return (
+    <div
+      className="flex items-center gap-3 px-4 py-2.5 rounded-xl mb-4"
+      style={{
+        background: 'rgba(239,68,68,0.07)',
+        border: '0.5px solid rgba(239,68,68,0.25)',
+      }}
+    >
+      <span>⚠️</span>
+      <div className="flex-1">
+        <p className="text-xs font-medium" style={{ color: '#EF4444' }}>
+          Password issues detected
+        </p>
+        <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
+          {issues}
+        </p>
+      </div>
+      <button
+        onClick={onDetails}
+        className="text-xs font-medium vx-btn"
+        style={{ color: 'var(--accent)', whiteSpace: 'nowrap' }}
+      >
+        Check health →
+      </button>
+    </div>
+  );
+}
+
 export default function Dashboard() {
   const navigate = useNavigate();
   const { vaultKey, clearSession } = useVaultStore();
@@ -181,13 +262,47 @@ export default function Dashboard() {
       .catch(() => {});
   }, []); // runs once on mount — re-runs when Dashboard remounts after /settings
 
+  useEffect(() => {
+    // Auto-lock after 15 min of inactivity
+    let timeout: ReturnType<typeof setTimeout>;
+    const resetTimer = () => {
+      clearTimeout(timeout);
+      timeout = setTimeout(
+        () => {
+          clearSession();
+          navigate('/unlock');
+        },
+        15 * 60 * 1000
+      );
+    };
+    const events = ['mousemove', 'keydown', 'click', 'scroll'];
+    events.forEach((e) => window.addEventListener(e, resetTimer));
+    resetTimer();
+    return () => {
+      clearTimeout(timeout);
+      events.forEach((e) => window.removeEventListener(e, resetTimer));
+    };
+  }, []);
+
+  // Ctrl+K / Cmd+K → focus search
+  useEffect(() => {
+    function handleKey(e: KeyboardEvent) {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+        e.preventDefault();
+        document.getElementById('vault-search')?.focus();
+      }
+    }
+    window.addEventListener('keydown', handleKey);
+    return () => window.removeEventListener('keydown', handleKey);
+  }, []);
+
   const [items, setItems] = useState<DecryptedVaultItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [pageError, setPageError] = useState('');
   const [search, setSearch] = useState('');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [activeType, setActiveType] = useState('all');
-  const [activeCategory, setActiveCategory] = useState('All');
+  const [activeCategory, setActiveCategory] = useState('');
 
   const [modalOpen, setModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -241,18 +356,26 @@ export default function Dashboard() {
 
   // ── Filter ─────────────────────────────────────────────────────────────────
 
-  const filtered = items.filter((item) => {
-    if (activeType === 'favorites') return !!item.payload.favorite;
-    if (activeType !== 'all' && item.type !== activeType) return false;
-    if (activeCategory !== 'All' && item.category !== activeCategory)
-      return false;
-    const q = search.toLowerCase();
-    return (
-      item.payload.title.toLowerCase().includes(q) ||
-      (item.payload.username ?? '').toLowerCase().includes(q) ||
-      (item.category ?? '').toLowerCase().includes(q)
-    );
-  });
+  const displayedItems = useMemo(() => {
+    return items.filter((item) => {
+      if (search) {
+        const q = search.toLowerCase();
+        if (
+          !item.payload.title.toLowerCase().includes(q) &&
+          !item.payload.username?.toLowerCase().includes(q) &&
+          !item.payload.url?.toLowerCase().includes(q) &&
+          !item.category?.toLowerCase().includes(q)
+        )
+          return false;
+      }
+      if (activeCategory) return (item.category ?? '') === activeCategory;
+      if (activeType === 'favorites') return item.payload.favorite === true;
+      if (activeType === 'login') return item.type === 'login';
+      if (activeType === 'note') return item.type === 'note';
+      if (activeType === 'card') return item.type === 'card';
+      return true;
+    });
+  }, [items, search, activeType, activeCategory]);
 
   // ── Modal ──────────────────────────────────────────────────────────────────
 
@@ -408,6 +531,16 @@ export default function Dashboard() {
     setShareCopied(false);
   }
 
+  function handleTypeChange(type: string) {
+    setActiveType(type);
+    setActiveCategory(''); // clear category when type filter changes
+  }
+
+  function handleCategoryChange(cat: string) {
+    setActiveCategory((prev) => (prev === cat ? '' : cat)); // toggle
+    setActiveType('all'); // clear type when category filter changes
+  }
+
   async function generateShareLink() {
     if (!shareModalItem || !vaultKey) return;
     setShareLoading(true);
@@ -483,8 +616,8 @@ export default function Dashboard() {
         items={items}
         activeType={activeType}
         activeCategory={activeCategory}
-        onTypeChange={setActiveType}
-        onCategoryChange={setActiveCategory}
+        onTypeChange={handleTypeChange}
+        onCategoryChange={handleCategoryChange}
         email={session?.email ?? ''}
         onLogout={handleLogout}
         onLockVault={handleLockVault}
@@ -558,6 +691,7 @@ export default function Dashboard() {
               </svg>
               <input
                 type="text"
+                id="vault-search"
                 placeholder="Search items..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
@@ -594,85 +728,151 @@ export default function Dashboard() {
                 Loading vault...
               </p>
             </div>
-          ) : filtered.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-24 gap-3">
-              <div
-                className="w-14 h-14 rounded-2xl flex items-center justify-center"
-                style={{ background: 'var(--bg-surface)' }}
-              >
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-                  <rect
-                    x="3"
-                    y="11"
-                    width="18"
-                    height="11"
-                    rx="2"
-                    stroke="var(--text-muted)"
-                    strokeWidth="1.5"
-                  />
-                  <path
-                    d="M7 11V7a5 5 0 0110 0v4"
-                    stroke="var(--text-muted)"
-                    strokeWidth="1.5"
-                    strokeLinecap="round"
-                  />
-                </svg>
-              </div>
-              <p
-                className="text-sm font-medium"
-                style={{ color: 'var(--text-secondary)' }}
-              >
-                {search
-                  ? 'No items match your search'
-                  : activeType === 'favorites'
-                    ? 'No favorites yet'
-                    : activeType === 'login'
-                      ? 'No logins saved yet'
-                      : activeType === 'note'
-                        ? 'No secure notes yet'
-                        : activeType === 'card'
-                          ? 'No cards saved yet'
-                          : 'Your vault is empty'}
-              </p>
-              {!search && activeType !== 'favorites' && (
-                <button
-                  onClick={openAdd}
-                  className="text-sm"
-                  style={{ color: 'var(--accent)' }}
-                >
-                  {activeType === 'login'
-                    ? 'Save your first login →'
-                    : activeType === 'note'
-                      ? 'Create your first note →'
-                      : activeType === 'card'
-                        ? 'Add your first card →'
-                        : 'Add your first item →'}
-                </button>
-              )}
-              {!search && activeType === 'favorites' && (
-                <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                  Star any item to see it here
-                </p>
-              )}
-            </div>
           ) : (
-            <div
-              className="grid gap-3"
-              style={{
-                gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
-              }}
-            >
-              {filtered.map((item) => (
-                <VaultItemCard
-                  key={item.id}
-                  item={item}
-                  onEdit={() => openEdit(item)}
-                  onDelete={() => handleDelete(item.id)}
-                  onToggleFavorite={() => handleToggleFavorite(item)}
-                  onShare={() => handleShare(item)}
-                />
-              ))}
-            </div>
+            <>
+              {/* Health banner — only shows when issues exist */}
+              <VaultHealthBanner
+                items={items}
+                onDetails={() => navigate('/health')}
+              />
+
+              {displayedItems.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-24 gap-3">
+                  <div
+                    className="w-14 h-14 rounded-2xl flex items-center justify-center"
+                    style={{ background: 'var(--bg-surface)' }}
+                  >
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+                      <rect
+                        x="3"
+                        y="11"
+                        width="18"
+                        height="11"
+                        rx="2"
+                        stroke="var(--text-muted)"
+                        strokeWidth="1.5"
+                      />
+                      <path
+                        d="M7 11V7a5 5 0 0110 0v4"
+                        stroke="var(--text-muted)"
+                        strokeWidth="1.5"
+                        strokeLinecap="round"
+                      />
+                    </svg>
+                  </div>
+                  <p
+                    className="text-sm font-medium"
+                    style={{ color: 'var(--text-secondary)' }}
+                  >
+                    {search
+                      ? 'No items match your search'
+                      : activeCategory
+                        ? `No items in "${activeCategory}"`
+                        : activeType === 'favorites'
+                          ? 'No favorites yet'
+                          : activeType === 'login'
+                            ? 'No logins saved yet'
+                            : activeType === 'note'
+                              ? 'No secure notes yet'
+                              : activeType === 'card'
+                                ? 'No cards saved yet'
+                                : 'Your vault is empty'}
+                  </p>
+                  {!search && activeType !== 'favorites' && !activeCategory && (
+                    <button
+                      onClick={openAdd}
+                      className="text-sm vx-btn"
+                      style={{ color: 'var(--accent)' }}
+                    >
+                      Add your first item →
+                    </button>
+                  )}
+                  {activeType === 'favorites' && !search && (
+                    <p
+                      className="text-xs"
+                      style={{ color: 'var(--text-muted)' }}
+                    >
+                      Star any item to see it here
+                    </p>
+                  )}
+                </div>
+              ) : activeType === 'all' && !activeCategory && !search ? (
+                // Category-grouped view (default)
+                <div className="flex flex-col gap-6">
+                  {groupByCategory(displayedItems).map(
+                    ([category, catItems]) => (
+                      <div key={category}>
+                        <div className="flex items-center gap-3 mb-3">
+                          <span
+                            className="text-xs font-semibold tracking-widest"
+                            style={{
+                              color: 'var(--text-muted)',
+                              textTransform: 'uppercase',
+                            }}
+                          >
+                            {category}
+                          </span>
+                          <span
+                            className="text-xs"
+                            style={{ color: 'var(--text-muted)' }}
+                          >
+                            ({catItems.length})
+                          </span>
+                          <div
+                            className="flex-1 h-px"
+                            style={{ background: 'var(--border)' }}
+                          />
+                        </div>
+                        <div
+                          className="grid gap-3"
+                          style={{
+                            gridTemplateColumns:
+                              'repeat(auto-fill, minmax(min(100%, 300px), 1fr))',
+                          }}
+                        >
+                          {catItems
+                            .sort((a, b) =>
+                              a.payload.title.localeCompare(b.payload.title)
+                            )
+                            .map((item) => (
+                              <VaultItemCard
+                                key={item.id}
+                                item={item}
+                                onEdit={() => openEdit(item)}
+                                onDelete={() => handleDelete(item.id)}
+                                onToggleFavorite={() =>
+                                  handleToggleFavorite(item)
+                                }
+                                onShare={() => handleShare(item)}
+                              />
+                            ))}
+                        </div>
+                      </div>
+                    )
+                  )}
+                </div>
+              ) : (
+                // Flat grid for filtered/searched views
+                <div
+                  className="grid gap-3"
+                  style={{
+                    gridTemplateColumns:
+                      'repeat(auto-fill, minmax(min(100%, 300px), 1fr))',
+                  }}
+                >
+                  {displayedItems.map((item) => (
+                    <VaultItemCard
+                      key={item.id}
+                      item={item}
+                      onEdit={() => openEdit(item)}
+                      onDelete={() => handleDelete(item.id)}
+                      onToggleFavorite={() => handleToggleFavorite(item)}
+                      onShare={() => handleShare(item)}
+                    />
+                  ))}
+                </div>
+              )}
+            </>
           )}
         </main>
       </div>
@@ -1067,6 +1267,7 @@ export default function Dashboard() {
                       }}
                     />
                     <select
+                      aria-label="Custom field type"
                       value={field.type}
                       onChange={(e) =>
                         setForm((f) => ({
