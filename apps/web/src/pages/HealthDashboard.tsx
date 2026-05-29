@@ -6,7 +6,6 @@ import { useVaultStore } from '../store/useVaultStore';
 import type { VaultItem } from '../store/useVaultStore';
 import type { ItemPayload } from './Dashboard';
 
-// ─── HIBP k-anonymity check ───────────────────────────────────────────────────
 async function checkBreached(password: string): Promise<boolean> {
   try {
     const encoder = new TextEncoder();
@@ -15,163 +14,95 @@ async function checkBreached(password: string): Promise<boolean> {
       .map((b) => b.toString(16).padStart(2, '0'))
       .join('')
       .toUpperCase();
-
-    const prefix = hex.slice(0, 5);
-    const suffix = hex.slice(5);
-
-    const res = await fetch(`https://api.pwnedpasswords.com/range/${prefix}`, {
-      headers: { 'Add-Padding': 'true' },
-    });
-    const text = await res.text();
-    return text.split('\r\n').some((line) => line.split(':')[0] === suffix);
+    const res = await fetch(
+      `https://api.pwnedpasswords.com/range/${hex.slice(0, 5)}`,
+      { headers: { 'Add-Padding': 'true' } }
+    );
+    return (await res.text())
+      .split('\r\n')
+      .some((l) => l.split(':')[0] === hex.slice(5));
   } catch {
     return false;
   }
 }
 
-function getStrengthBars(password: string): number {
-  if (password.length < 8) return 1;
-  let score = 0;
-  if (/[A-Z]/.test(password)) score++;
-  if (/[a-z]/.test(password)) score++;
-  if (/[0-9]/.test(password)) score++;
-  if (/[^A-Za-z0-9]/.test(password)) score++;
-  if (password.length < 12) return score >= 3 ? 2 : 1;
-  if (score <= 1) return 2;
-  if (score <= 2) return 3;
-  return 4;
+function strengthBars(p: string): number {
+  if (p.length < 8) return 1;
+  let s = 0;
+  if (/[A-Z]/.test(p)) s++;
+  if (/[a-z]/.test(p)) s++;
+  if (/[0-9]/.test(p)) s++;
+  if (/[^A-Za-z0-9]/.test(p)) s++;
+  if (p.length < 12) return Math.min(s, 2);
+  return s <= 1 ? 2 : s === 2 ? 3 : 4;
 }
 
-// ─── Types ────────────────────────────────────────────────────────────────────
 interface AnalyzedItem {
   id: string;
   title: string;
   username: string;
   password: string;
   url: string;
-  strengthBars: number;
+  bars: number;
   isBreached: boolean;
   isReused: boolean;
-  passwordAgeDays: number | null;
+  ageDays: number | null;
   issues: string[];
 }
 
-type CheckStatus = 'idle' | 'decrypting' | 'checking' | 'done';
+type Status = 'idle' | 'decrypting' | 'checking' | 'done';
 
-// ─── Score card ───────────────────────────────────────────────────────────────
-function ScoreRing({ score }: { score: number }) {
-  const color = score >= 80 ? '#10B981' : score >= 60 ? '#F59E0B' : '#EF4444';
-  const label = score >= 80 ? 'Good' : score >= 60 ? 'Fair' : 'At Risk';
-  const r = 40;
-  const circumference = 2 * Math.PI * r;
-  const offset = circumference - (score / 100) * circumference;
-
-  return (
-    <div className="flex flex-col items-center gap-1">
-      <svg width="100" height="100" viewBox="0 0 100 100">
-        <circle
-          cx="50"
-          cy="50"
-          r={r}
-          fill="none"
-          stroke="var(--border)"
-          strokeWidth="8"
-        />
-        <circle
-          cx="50"
-          cy="50"
-          r={r}
-          fill="none"
-          stroke={color}
-          strokeWidth="8"
-          strokeDasharray={circumference}
-          strokeDashoffset={offset}
-          strokeLinecap="round"
-          transform="rotate(-90 50 50)"
-          style={{ transition: 'stroke-dashoffset 1s ease' }}
-        />
-        <text
-          x="50"
-          y="50"
-          textAnchor="middle"
-          dominantBaseline="middle"
-          style={{ fontSize: 22, fontWeight: 600, fill: color }}
-        >
-          {score}
-        </text>
-      </svg>
-      <span className="text-xs font-medium" style={{ color }}>
-        {label}
-      </span>
-    </div>
-  );
-}
-
-// ─── Main component ───────────────────────────────────────────────────────────
 export default function HealthDashboard() {
   const navigate = useNavigate();
   const { vaultKey } = useVaultStore();
-
   const [items, setItems] = useState<AnalyzedItem[]>([]);
-  const [status, setStatus] = useState<CheckStatus>('idle');
+  const [status, setStatus] = useState<Status>('idle');
   const [progress, setProgress] = useState(0);
   const [total, setTotal] = useState(0);
-  const [activeFilter, setActiveFilter] = useState<
+  const [filter, setFilter] = useState<
     'all' | 'breached' | 'weak' | 'reused' | 'old'
   >('all');
 
-  const runAnalysis = useCallback(async () => {
+  const run = useCallback(async () => {
     if (!vaultKey) return;
     setStatus('decrypting');
     setItems([]);
 
-    // Step 1: Fetch + decrypt
     const { data } = await api.get('/api/vault/items');
-    const rawItems: VaultItem[] = Array.isArray(data)
-      ? data
-      : (data.items ?? []);
-    const loginItems = rawItems.filter((i) => i.type === 'login');
+    const raw: VaultItem[] = Array.isArray(data) ? data : (data.items ?? []);
+    const logins = raw.filter((i) => i.type === 'login');
 
-    const decrypted: Array<{ id: string; payload: ItemPayload }> = [];
-    for (const item of loginItems) {
+    const dec: { id: string; payload: ItemPayload }[] = [];
+    for (const item of logins) {
       try {
         const plain = await decrypt(
           { ciphertext: item.encrypted_data, iv: item.iv },
           vaultKey
         );
-        decrypted.push({
-          id: item.id,
-          payload: JSON.parse(plain) as ItemPayload,
-        });
+        dec.push({ id: item.id, payload: JSON.parse(plain) });
       } catch {
         /* skip */
       }
     }
 
-    // Step 2: Find reused passwords
-    const passwordMap = new Map<string, string[]>();
-    decrypted.forEach(({ id, payload }) => {
+    const passMap = new Map<string, string[]>();
+    dec.forEach(({ id, payload }) => {
       const p = payload.password ?? '';
-      if (!p) return;
-      const existing = passwordMap.get(p) ?? [];
-      passwordMap.set(p, [...existing, id]);
+      if (p) passMap.set(p, [...(passMap.get(p) ?? []), id]);
     });
 
-    // Step 3: HIBP checks
     setStatus('checking');
-    setTotal(decrypted.length);
+    setTotal(dec.length);
     setProgress(0);
-
     const analyzed: AnalyzedItem[] = [];
 
-    for (let i = 0; i < decrypted.length; i++) {
-      const { id, payload } = decrypted[i];
-      const password = payload.password ?? '';
-      const strengthBars = password ? getStrengthBars(password) : 1;
-      const isReused = (passwordMap.get(password)?.length ?? 1) > 1;
-      const isBreached = password ? await checkBreached(password) : false;
-
-      const passwordAgeDays = payload.passwordChangedAt
+    for (let i = 0; i < dec.length; i++) {
+      const { id, payload } = dec[i];
+      const pw = payload.password ?? '';
+      const bars = pw ? strengthBars(pw) : 1;
+      const isReused = (passMap.get(pw)?.length ?? 1) > 1;
+      const isBreached = pw ? await checkBreached(pw) : false;
+      const ageDays = payload.passwordChangedAt
         ? Math.floor(
             (Date.now() - new Date(payload.passwordChangedAt).getTime()) /
               86400000
@@ -180,100 +111,105 @@ export default function HealthDashboard() {
 
       const issues: string[] = [];
       if (isBreached) issues.push('breached');
-      if (strengthBars <= 2) issues.push('weak');
+      if (bars <= 2) issues.push('weak');
       if (isReused) issues.push('reused');
-      if (passwordAgeDays !== null && passwordAgeDays > 180) issues.push('old');
+      if (ageDays !== null && ageDays > 180) issues.push('old');
 
       analyzed.push({
         id,
         title: payload.title ?? 'Unknown',
         username: payload.username ?? '',
-        password,
+        password: pw,
         url: payload.url ?? '',
-        strengthBars,
+        bars,
         isBreached,
         isReused,
-        passwordAgeDays,
+        ageDays,
         issues,
       });
-
       setProgress(i + 1);
-      // Rate limit: 1 HIBP request per 1.5s
-      if (i < decrypted.length - 1)
-        await new Promise((r) => setTimeout(r, 1500));
+      if (i < dec.length - 1) await new Promise((r) => setTimeout(r, 1500));
     }
 
     setItems(analyzed);
     setStatus('done');
-
-    const breachedTitles = analyzed
-      .filter((i) => i.isBreached)
-      .map((i) => i.title);
-    if (breachedTitles.length > 0) {
-      // Tell backend to send breach alert email
-      api
-        .post('/api/vault/breach-alert', { sites: breachedTitles })
-        .catch(() => {});
-    }
+    const breached = analyzed.filter((i) => i.isBreached).map((i) => i.title);
+    if (breached.length > 0)
+      api.post('/api/vault/breach-alert', { sites: breached }).catch(() => {});
   }, [vaultKey]);
 
   useEffect(() => {
-    runAnalysis();
-  }, [runAnalysis]);
+    run();
+  }, [run]);
 
-  // Compute health score
-  const loginCount = items.length;
-  const breachedCount = items.filter((i) => i.isBreached).length;
-  const weakCount = items.filter((i) => i.strengthBars <= 2).length;
-  const reusedCount = items.filter((i) => i.isReused).length;
-  const oldCount = items.filter(
-    (i) => i.passwordAgeDays !== null && i.passwordAgeDays > 180
+  const n = items.length;
+  const breachedN = items.filter((i) => i.isBreached).length;
+  const weakN = items.filter((i) => i.bars <= 2).length;
+  const reusedN = items.filter((i) => i.isReused).length;
+  const oldN = items.filter(
+    (i) => i.ageDays !== null && i.ageDays > 180
   ).length;
-
-  const issuePoints =
-    breachedCount * 40 + weakCount * 20 + reusedCount * 15 + oldCount * 10;
-  const maxPoints = loginCount * 40;
+  const issueItems = items.filter((i) => i.issues.length > 0).length;
   const score =
-    loginCount === 0
+    n === 0
       ? 100
-      : Math.max(0, Math.round(100 - (issuePoints / maxPoints) * 100));
+      : Math.max(
+          0,
+          Math.round(
+            100 -
+              ((breachedN * 40 + weakN * 20 + reusedN * 15 + oldN * 10) /
+                (n * 40)) *
+                100
+          )
+        );
+  const scoreColor =
+    score >= 80 ? '#10B981' : score >= 60 ? '#F59E0B' : '#EF4444';
+  const scoreLabel = score >= 80 ? 'Good' : score >= 60 ? 'Fair' : 'At Risk';
 
-  const filtered = items.filter((item) => {
-    if (activeFilter === 'breached') return item.isBreached;
-    if (activeFilter === 'weak') return item.strengthBars <= 2;
-    if (activeFilter === 'reused') return item.isReused;
-    if (activeFilter === 'old')
-      return item.passwordAgeDays !== null && item.passwordAgeDays > 180;
-    return item.issues.length > 0;
-  });
-
-  const FILTERS: Array<{
-    id: typeof activeFilter;
-    label: string;
-    count: number;
-    color: string;
-  }> = [
+  const TABS = [
     {
-      id: 'all',
+      id: 'all' as const,
       label: 'All Issues',
-      count: items.filter((i) => i.issues.length > 0).length,
-      color: 'var(--text-muted)',
-    },
-    {
-      id: 'breached',
-      label: '🔴 Breached',
-      count: breachedCount,
-      color: '#EF4444',
-    },
-    { id: 'weak', label: '🟡 Weak', count: weakCount, color: '#F59E0B' },
-    { id: 'reused', label: '🟠 Reused', count: reusedCount, color: '#F97316' },
-    {
-      id: 'old',
-      label: '📅 Old',
-      count: oldCount,
+      count: issueItems,
       color: 'var(--text-secondary)',
     },
+    {
+      id: 'breached' as const,
+      label: 'Breached',
+      count: breachedN,
+      color: '#EF4444',
+      icon: '🔴',
+    },
+    {
+      id: 'weak' as const,
+      label: 'Weak',
+      count: weakN,
+      color: '#F59E0B',
+      icon: '🟡',
+    },
+    {
+      id: 'reused' as const,
+      label: 'Reused',
+      count: reusedN,
+      color: '#F97316',
+      icon: '🔄',
+    },
+    {
+      id: 'old' as const,
+      label: 'Old',
+      count: oldN,
+      color: '#64748B',
+      icon: '📅',
+    },
   ];
+
+  const displayed = items.filter((item) => {
+    if (filter === 'breached') return item.isBreached;
+    if (filter === 'weak') return item.bars <= 2;
+    if (filter === 'reused') return item.isReused;
+    if (filter === 'old') return item.ageDays !== null && item.ageDays > 180;
+    return item.issues.length > 0;
+  });
 
   return (
     <div style={{ minHeight: '100vh', background: 'var(--bg-base)' }}>
@@ -307,44 +243,77 @@ export default function HealthDashboard() {
         >
           Vault Health
         </span>
-
         {status === 'done' && (
           <button
-            onClick={runAnalysis}
+            onClick={run}
             className="ml-auto text-xs px-3 py-1.5 rounded-lg vx-btn-ghost"
             style={{
               color: 'var(--text-secondary)',
               border: '0.5px solid var(--border)',
             }}
           >
-            Re-check
+            ↻ Re-check
           </button>
         )}
       </header>
 
       <div className="max-w-4xl mx-auto px-6 py-8">
-        {/* Loading state */}
+        {/* Loading */}
         {(status === 'decrypting' || status === 'checking') && (
-          <div className="flex flex-col items-center justify-center py-24 gap-4">
-            <div
-              className="w-12 h-12 rounded-full border-2 border-t-transparent animate-spin"
-              style={{
-                borderColor: 'var(--accent)',
-                borderTopColor: 'transparent',
-              }}
-            />
-            <p
-              className="text-sm font-medium"
-              style={{ color: 'var(--text-primary)' }}
-            >
-              {status === 'decrypting'
-                ? 'Decrypting vault items...'
-                : `Checking breaches... ${progress}/${total}`}
-            </p>
+          <div className="flex flex-col items-center justify-center py-24 gap-5">
+            <div className="relative w-20 h-20">
+              <svg
+                className="animate-spin"
+                width="80"
+                height="80"
+                viewBox="0 0 80 80"
+              >
+                <circle
+                  cx="40"
+                  cy="40"
+                  r="34"
+                  fill="none"
+                  stroke="var(--border)"
+                  strokeWidth="6"
+                />
+                <circle
+                  cx="40"
+                  cy="40"
+                  r="34"
+                  fill="none"
+                  stroke="var(--accent)"
+                  strokeWidth="6"
+                  strokeDasharray="53 160"
+                  strokeLinecap="round"
+                  transform="rotate(-90 40 40)"
+                />
+              </svg>
+              <span className="absolute inset-0 flex items-center justify-center text-lg">
+                🔍
+              </span>
+            </div>
+            <div className="text-center">
+              <p
+                className="text-sm font-medium"
+                style={{ color: 'var(--text-primary)' }}
+              >
+                {status === 'decrypting'
+                  ? 'Decrypting vault...'
+                  : `Checking breaches... ${progress}/${total}`}
+              </p>
+              <p
+                className="text-xs mt-1"
+                style={{ color: 'var(--text-muted)' }}
+              >
+                {status === 'checking'
+                  ? 'Using k-anonymity — your passwords are never sent'
+                  : 'Analyzing passwords locally...'}
+              </p>
+            </div>
             {status === 'checking' && (
-              <>
+              <div className="w-64 flex flex-col gap-1.5">
                 <div
-                  className="w-64 h-1.5 rounded-full overflow-hidden"
+                  className="h-2 rounded-full overflow-hidden"
                   style={{ background: 'var(--border)' }}
                 >
                   <div
@@ -355,124 +324,223 @@ export default function HealthDashboard() {
                     }}
                   />
                 </div>
-                <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                  Checking Have I Been Pwned database...
+                <p
+                  className="text-xs text-center"
+                  style={{ color: 'var(--text-muted)' }}
+                >
+                  {progress} of {total} checked
                 </p>
-              </>
+              </div>
             )}
           </div>
         )}
 
-        {status === 'done' && (
-          <>
-            {/* Score + summary */}
+        {/* Idle */}
+        {status === 'idle' && (
+          <div className="flex flex-col items-center justify-center py-24 gap-4">
             <div
-              className="rounded-2xl p-6 mb-6 flex flex-wrap items-center gap-8"
+              className="w-16 h-16 rounded-2xl flex items-center justify-center text-3xl"
+              style={{ background: 'var(--accent-subtle)' }}
+            >
+              🔒
+            </div>
+            <p
+              className="text-base font-medium"
+              style={{ color: 'var(--text-primary)' }}
+            >
+              Check your vault health
+            </p>
+            <p
+              className="text-sm text-center max-w-sm"
+              style={{ color: 'var(--text-muted)' }}
+            >
+              Scan for breached, weak, and reused passwords. Uses Have I Been
+              Pwned k-anonymity — your passwords never leave your device.
+            </p>
+            <button
+              onClick={run}
+              className="px-6 py-3 rounded-xl text-sm font-medium vx-btn-accent"
+              style={{ background: 'var(--accent)', color: '#fff' }}
+            >
+              Start health check
+            </button>
+          </div>
+        )}
+
+        {/* Results */}
+        {status === 'done' && (
+          <div className="flex flex-col gap-6">
+            {/* Hero score card */}
+            <div
+              className="rounded-2xl overflow-hidden"
               style={{
                 background: 'var(--bg-surface)',
                 border: '0.5px solid var(--border)',
               }}
             >
-              <ScoreRing score={score} />
-
-              <div
-                className="flex-1 grid grid-cols-2 gap-3"
-                style={{ minWidth: 240 }}
-              >
-                {FILTERS.slice(1).map((f) => (
-                  <button
-                    key={f.id}
-                    onClick={() => setActiveFilter(f.id)}
-                    className="rounded-xl p-4 text-left vx-btn-ghost"
-                    style={{
-                      background:
-                        activeFilter === f.id
-                          ? 'var(--bg-elevated)'
-                          : 'var(--bg-elevated)',
-                      border:
-                        activeFilter === f.id
-                          ? `1px solid ${f.color}`
-                          : '0.5px solid var(--border)',
-                    }}
-                  >
+              {/* Score bar header */}
+              <div className="px-6 pt-6 pb-4">
+                <div className="flex items-end justify-between mb-2">
+                  <div>
                     <p
-                      className="text-2xl font-semibold"
-                      style={{ color: f.color }}
+                      className="text-xs font-medium mb-0.5"
+                      style={{
+                        color: 'var(--text-muted)',
+                        textTransform: 'uppercase',
+                        letterSpacing: '0.06em',
+                      }}
                     >
-                      {f.count}
+                      Vault Health Score
                     </p>
-                    <p
-                      className="text-xs mt-0.5"
-                      style={{ color: 'var(--text-muted)' }}
-                    >
-                      {f.label.split(' ').slice(1).join(' ')}
-                    </p>
-                  </button>
-                ))}
+                    <div className="flex items-baseline gap-2">
+                      <span
+                        className="text-4xl font-bold"
+                        style={{ color: scoreColor }}
+                      >
+                        {score}
+                      </span>
+                      <span
+                        className="text-lg"
+                        style={{ color: 'var(--text-muted)' }}
+                      >
+                        /100
+                      </span>
+                      <span
+                        className="text-sm font-medium ml-1"
+                        style={{ color: scoreColor }}
+                      >
+                        {scoreLabel}
+                      </span>
+                    </div>
+                  </div>
+                  <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
+                    {n} login{n !== 1 ? 's' : ''} analyzed
+                  </p>
+                </div>
+                {/* Score bar */}
+                <div
+                  className="h-3 rounded-full overflow-hidden"
+                  style={{ background: 'var(--border)' }}
+                >
+                  <div
+                    className="h-full rounded-full transition-all duration-1000"
+                    style={{ width: `${score}%`, background: scoreColor }}
+                  />
+                </div>
               </div>
 
-              <div style={{ color: 'var(--text-muted)', fontSize: 13 }}>
-                <p>
-                  {loginCount} login{loginCount !== 1 ? 's' : ''} analyzed
-                </p>
-                <p className="mt-1">
-                  {items.filter((i) => i.issues.length === 0).length} all clear
-                </p>
+              {/* Issue metrics */}
+              <div
+                className="grid grid-cols-4"
+                style={{ borderTop: '0.5px solid var(--border)' }}
+              >
+                {TABS.slice(1).map((tab, i) => (
+                  <button
+                    key={tab.id}
+                    onClick={() => setFilter(tab.id)}
+                    className="vx-btn flex flex-col items-center gap-1 py-4"
+                    style={{
+                      borderRight: i < 3 ? '0.5px solid var(--border)' : 'none',
+                      background:
+                        filter === tab.id
+                          ? 'var(--bg-elevated)'
+                          : 'transparent',
+                    }}
+                  >
+                    <span
+                      className="text-2xl font-bold"
+                      style={{
+                        color: tab.count > 0 ? tab.color : 'var(--text-muted)',
+                      }}
+                    >
+                      {tab.count}
+                    </span>
+                    <span
+                      className="text-xs"
+                      style={{ color: 'var(--text-muted)' }}
+                    >
+                      {tab.label}
+                    </span>
+                    {tab.count > 0 && filter !== tab.id && (
+                      <span
+                        className="w-1.5 h-1.5 rounded-full"
+                        style={{ background: tab.color }}
+                      />
+                    )}
+                  </button>
+                ))}
               </div>
             </div>
 
             {/* Filter tabs */}
-            <div className="flex gap-2 mb-4 flex-wrap">
-              {FILTERS.map((f) => (
+            <div className="flex gap-2 flex-wrap">
+              {TABS.map((tab) => (
                 <button
-                  key={f.id}
-                  onClick={() => setActiveFilter(f.id)}
+                  key={tab.id}
+                  onClick={() => setFilter(tab.id)}
                   className="px-3 py-1.5 rounded-lg text-xs font-medium vx-btn"
                   style={{
                     background:
-                      activeFilter === f.id
+                      filter === tab.id
                         ? 'var(--accent-subtle)'
                         : 'var(--bg-surface)',
                     color:
-                      activeFilter === f.id
+                      filter === tab.id
                         ? 'var(--accent)'
                         : 'var(--text-secondary)',
-                    border: '0.5px solid var(--border)',
+                    border: `0.5px solid ${filter === tab.id ? 'var(--accent)' : 'var(--border)'}`,
                   }}
                 >
-                  {f.label} ({f.count})
+                  {tab.id !== 'all' && tab.icon + ' '}
+                  {tab.label} ({tab.count})
                 </button>
               ))}
             </div>
 
             {/* Items list */}
-            {filtered.length === 0 ? (
-              <div className="flex flex-col items-center py-16 gap-3">
-                <p className="text-4xl">✅</p>
+            {displayed.length === 0 ? (
+              <div
+                className="flex flex-col items-center py-16 gap-3 rounded-2xl"
+                style={{
+                  background: 'var(--bg-surface)',
+                  border: '0.5px solid var(--border)',
+                }}
+              >
+                <span style={{ fontSize: 40 }}>✅</span>
                 <p
                   className="text-sm font-medium"
                   style={{ color: 'var(--text-primary)' }}
                 >
-                  {activeFilter === 'all'
-                    ? 'No issues found!'
-                    : `No ${activeFilter} passwords`}
+                  {filter === 'all'
+                    ? 'No issues found! Your vault looks great.'
+                    : `No ${filter} passwords`}
                 </p>
+                {filter !== 'all' && (
+                  <button
+                    onClick={() => setFilter('all')}
+                    className="text-xs vx-btn"
+                    style={{ color: 'var(--accent)' }}
+                  >
+                    View all
+                  </button>
+                )}
               </div>
             ) : (
               <div className="flex flex-col gap-2">
-                {filtered.map((item) => (
+                {displayed.map((item) => (
                   <div
                     key={item.id}
-                    className="rounded-xl p-4 vx-card"
+                    className="rounded-xl vx-card"
                     style={{
                       background: 'var(--bg-surface)',
                       border: '0.5px solid var(--border)',
+                      overflow: 'hidden',
                     }}
                   >
-                    <div className="flex items-start gap-3">
+                    <div className="flex items-center gap-3 p-4">
                       {/* Icon */}
                       <div
-                        className="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 text-xs font-medium"
+                        className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 text-sm font-bold"
                         style={{
                           background: 'var(--accent-subtle)',
                           color: 'var(--accent)',
@@ -492,15 +560,15 @@ export default function HealthDashboard() {
                           className="text-xs truncate"
                           style={{ color: 'var(--text-muted)' }}
                         >
-                          {item.username}
+                          {item.username || item.url}
                         </p>
                       </div>
 
                       {/* Issue badges */}
-                      <div className="flex flex-wrap gap-1.5 justify-end">
+                      <div className="flex items-center gap-1.5 flex-wrap justify-end">
                         {item.isBreached && (
                           <span
-                            className="text-xs px-2 py-0.5 rounded-md font-medium"
+                            className="text-xs px-2 py-0.5 rounded-full font-medium"
                             style={{
                               background: 'rgba(239,68,68,0.15)',
                               color: '#EF4444',
@@ -509,9 +577,9 @@ export default function HealthDashboard() {
                             🔴 Breached
                           </span>
                         )}
-                        {item.strengthBars <= 2 && (
+                        {item.bars <= 2 && (
                           <span
-                            className="text-xs px-2 py-0.5 rounded-md font-medium"
+                            className="text-xs px-2 py-0.5 rounded-full font-medium"
                             style={{
                               background: 'rgba(245,158,11,0.15)',
                               color: '#F59E0B',
@@ -522,74 +590,73 @@ export default function HealthDashboard() {
                         )}
                         {item.isReused && (
                           <span
-                            className="text-xs px-2 py-0.5 rounded-md font-medium"
+                            className="text-xs px-2 py-0.5 rounded-full font-medium"
                             style={{
                               background: 'rgba(249,115,22,0.15)',
                               color: '#F97316',
                             }}
                           >
-                            🟠 Reused
+                            🔄 Reused
                           </span>
                         )}
-                        {item.passwordAgeDays !== null &&
-                          item.passwordAgeDays > 180 && (
-                            <span
-                              className="text-xs px-2 py-0.5 rounded-md"
-                              style={{
-                                background: 'var(--bg-elevated)',
-                                color: 'var(--text-muted)',
-                              }}
-                            >
-                              📅 {item.passwordAgeDays}d old
-                            </span>
-                          )}
+                        {item.ageDays !== null && item.ageDays > 180 && (
+                          <span
+                            className="text-xs px-2 py-0.5 rounded-full"
+                            style={{
+                              background: 'var(--bg-elevated)',
+                              color: 'var(--text-muted)',
+                            }}
+                          >
+                            📅 {item.ageDays}d old
+                          </span>
+                        )}
+                        <button
+                          onClick={() => navigate('/dashboard')}
+                          className="text-xs px-3 py-1.5 rounded-lg font-medium ml-1 vx-btn-ghost"
+                          style={{
+                            color: 'var(--accent)',
+                            border: '0.5px solid var(--accent)',
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
+                          Fix →
+                        </button>
                       </div>
                     </div>
 
-                    {/* Action advice */}
-                    {item.isBreached && (
+                    {/* Bottom advice bar */}
+                    <div
+                      className="px-4 py-2"
+                      style={{
+                        borderTop: '0.5px solid var(--border)',
+                        background: 'var(--bg-elevated)',
+                      }}
+                    >
                       <p
-                        className="text-xs mt-3 pl-12"
-                        style={{ color: '#EF4444' }}
+                        className="text-xs"
+                        style={{
+                          color: item.isBreached
+                            ? '#EF4444'
+                            : item.bars <= 2
+                              ? '#F59E0B'
+                              : item.isReused
+                                ? '#F97316'
+                                : 'var(--text-muted)',
+                        }}
                       >
-                        ⚠ This password appeared in a data breach. Change it
-                        immediately.
+                        {item.isBreached
+                          ? '⚠ This password was found in a data breach. Change it immediately.'
+                          : item.bars <= 2
+                            ? 'Password is too weak. Generate a strong one with 12+ characters.'
+                            : item.isReused
+                              ? 'Same password on multiple sites. Use a unique password for each.'
+                              : `Password hasn't changed in ${item.ageDays} days. Consider updating it.`}
                       </p>
-                    )}
-                    {!item.isBreached && item.strengthBars <= 2 && (
-                      <p
-                        className="text-xs mt-3 pl-12"
-                        style={{ color: '#F59E0B' }}
-                      >
-                        Password is too weak. Use 12+ characters with symbols.
-                      </p>
-                    )}
-                    {item.isReused && !item.isBreached && (
-                      <p
-                        className="text-xs mt-3 pl-12"
-                        style={{ color: '#F97316' }}
-                      >
-                        Same password used on multiple sites — use a unique
-                        password.
-                      </p>
-                    )}
+                    </div>
                   </div>
                 ))}
               </div>
             )}
-          </>
-        )}
-
-        {/* Idle / empty vault */}
-        {status === 'idle' && (
-          <div className="flex items-center justify-center py-24">
-            <button
-              onClick={runAnalysis}
-              className="px-6 py-3 rounded-xl text-sm font-medium vx-btn-accent"
-              style={{ background: 'var(--accent)', color: '#fff' }}
-            >
-              Start Health Check
-            </button>
           </div>
         )}
       </div>

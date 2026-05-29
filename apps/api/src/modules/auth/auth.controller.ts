@@ -10,6 +10,8 @@ import {
   deleteUserAccount,
 } from './auth.service';
 import { registerSchema, loginSchema } from './auth.validation';
+import { pool } from '../../db/pool';
+import { redis } from '../../db/redis';
 
 const COOKIE_OPTIONS = {
   httpOnly: true, // JS can't read this cookie
@@ -137,15 +139,78 @@ export async function changePassword(
   }
 }
 
+export async function listSessions(req: Request, res: Response): Promise<void> {
+  try {
+    const result = await pool.query(
+      `SELECT id, device_info, created_at, expires_at FROM sessions
+       WHERE user_id = $1 AND expires_at > NOW()
+       ORDER BY created_at DESC`,
+      [req.user!.userId]
+    );
+    res.json({ sessions: result.rows, currentSessionId: req.user!.sessionId });
+  } catch {
+    res.status(500).json({ error: 'Failed to list sessions' });
+  }
+}
+
+export async function terminateSession(
+  req: Request,
+  res: Response
+): Promise<void> {
+  try {
+    const { sessionId } = req.params;
+    if (sessionId === req.user!.sessionId) {
+      res.status(400).json({ error: "Can't terminate current session" });
+      return;
+    }
+    await pool.query('DELETE FROM sessions WHERE id = $1 AND user_id = $2', [
+      sessionId,
+      req.user!.userId,
+    ]);
+    await redis.del(`session:${sessionId}`);
+    res.json({ message: 'Session terminated' });
+  } catch {
+    res.status(500).json({ error: 'Failed' });
+  }
+}
+
+export async function terminateAllOtherSessions(
+  req: Request,
+  res: Response
+): Promise<void> {
+  try {
+    const currentId = req.user!.sessionId;
+    await pool.query('DELETE FROM sessions WHERE user_id = $1 AND id != $2', [
+      req.user!.userId,
+      currentId,
+    ]);
+    res.json({ message: 'All other sessions terminated' });
+  } catch {
+    res.status(500).json({ error: 'Failed' });
+  }
+}
+
 export async function deleteAccount(
   req: Request,
   res: Response
 ): Promise<void> {
   try {
-    await deleteUserAccount(req.user!.userId);
+    const { authKey } = req.body;
+    if (!authKey) {
+      res.status(400).json({ error: 'Master password required' });
+      return;
+    }
+
+    await deleteUserAccount(req.user!.userId, authKey);
     res.clearCookie('refreshToken');
     res.json({ message: 'Account deleted' });
-  } catch {
+  } catch (err: unknown) {
+    if (err instanceof Error) {
+      if (err.message === 'INVALID_CREDENTIALS') {
+        res.status(401).json({ error: 'Incorrect master password' });
+        return;
+      }
+    }
     res.status(500).json({ error: 'Failed to delete account' });
   }
 }

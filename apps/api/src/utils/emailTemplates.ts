@@ -186,3 +186,27 @@ export function breachAlertEmail(
   `;
   return layout('Password breach detected — VaultX', body);
 }
+
+export function accountDeletionExportEmail(
+  email: string,
+  exportJson: string
+): string {
+  const preview =
+    exportJson.slice(0, 500) + (exportJson.length > 500 ? '...' : '');
+  return layout(
+    'Your VaultX data export',
+    `
+    ${h1('Account deleted — your data export')}
+    ${p('Your VaultX account has been deleted. Below is an encrypted export of your vault data.')}
+    ${divider()}
+    <div style="background:#1A1A00;border-radius:8px;padding:16px;margin:16px 0;">
+      <p style="color:#F59E0B;font-size:13px;font-weight:500;margin:0 0 8px 0;">⚠ Keep this email safe</p>
+      <p style="color:#C0A060;font-size:13px;margin:0;">
+        Your items are encrypted. You'll need your master password to decrypt them if you import into a new vault.
+      </p>
+    </div>
+    <pre style="background:#0D0D0D;border-radius:8px;padding:16px;overflow:auto;font-size:11px;color:#888;max-height:200px;word-break:break-all;">${preview}</pre>
+    ${p(`Account: ${email}`, true)}
+  `
+  );
+}

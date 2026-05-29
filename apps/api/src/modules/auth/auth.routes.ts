@@ -7,6 +7,9 @@ import {
   changePassword,
   prelogin,
   deleteAccount,
+  listSessions,
+  terminateSession,
+  terminateAllOtherSessions,
 } from './auth.controller';
 import { authenticate } from '../../middleware/authenticate';
 import { validateEmailDomain } from '../../middleware/emailValidator';
@@ -39,5 +42,8 @@ router.post('/google/complete', googleSetupComplete);
 router.delete('/account', authenticate, deleteAccount);
 router.post('/otp/send', authenticate, sendOTP);
 router.post('/otp/verify', authenticate, verifyOTP);
+router.get('/sessions', authenticate, listSessions);
+router.delete('/sessions/:sessionId', authenticate, terminateSession);
+router.delete('/sessions', authenticate, terminateAllOtherSessions);
 
 export default router;

@@ -571,6 +571,180 @@ function ProfileTab({
   );
 }
 
+function SessionsCard() {
+  const [sessions, setSessions] = useState<
+    Array<{
+      id: string;
+      device_info: string;
+      created_at: string;
+      expires_at: string;
+    }>
+  >([]);
+  const [currentId, setCurrentId] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [terminating, setTerminating] = useState<string | null>(null);
+
+  async function load() {
+    try {
+      const { data } = await api.get('/api/auth/sessions');
+      setSessions(data.sessions);
+      setCurrentId(data.currentSessionId);
+    } catch {
+      /* ignore */
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    load();
+  }, []);
+
+  async function killSession(id: string) {
+    setTerminating(id);
+    try {
+      await api.delete(`/api/auth/sessions/${id}`);
+      setSessions((prev) => prev.filter((s) => s.id !== id));
+    } catch {
+      /* ignore */
+    } finally {
+      setTerminating(null);
+    }
+  }
+
+  async function killAll() {
+    setTerminating('all');
+    try {
+      await api.delete('/api/auth/sessions');
+      setSessions((prev) => prev.filter((s) => s.id === currentId));
+      toast('All other sessions signed out', 'success');
+    } catch {
+      /* ignore */
+    } finally {
+      setTerminating(null);
+    }
+  }
+
+  const others = sessions.filter((s) => s.id !== currentId);
+
+  return (
+    <Card>
+      <div className="flex items-center justify-between">
+        <SectionLabel>Active Sessions</SectionLabel>
+        {others.length > 0 && (
+          <button
+            onClick={killAll}
+            disabled={terminating === 'all'}
+            className="text-xs px-2 py-1 rounded-lg vx-btn"
+            style={{
+              color: 'var(--danger)',
+              opacity: terminating === 'all' ? 0.7 : 1,
+            }}
+          >
+            Sign out all others
+          </button>
+        )}
+      </div>
+
+      {loading ? (
+        <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
+          Loading sessions...
+        </p>
+      ) : sessions.length === 0 ? (
+        <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
+          No active sessions
+        </p>
+      ) : (
+        <div className="flex flex-col gap-2">
+          {sessions.map((s) => {
+            const isCurrent = s.id === currentId;
+            const device = (() => {
+              try {
+                const d = JSON.parse(s.device_info);
+                return d.userAgent?.slice(0, 60) ?? 'Unknown device';
+              } catch {
+                return 'Unknown device';
+              }
+            })();
+            const when = new Date(s.created_at).toLocaleDateString('en-US', {
+              month: 'short',
+              day: 'numeric',
+              hour: '2-digit',
+              minute: '2-digit',
+            });
+            return (
+              <div
+                key={s.id}
+                className="flex items-center gap-3 rounded-lg p-3"
+                style={{
+                  background: 'var(--bg-elevated)',
+                  border: isCurrent
+                    ? '0.5px solid var(--accent)'
+                    : '0.5px solid var(--border)',
+                }}
+              >
+                <div
+                  className="flex items-center justify-center w-8 h-8 rounded-lg flex-shrink-0"
+                  style={{
+                    background: isCurrent
+                      ? 'var(--accent-subtle)'
+                      : 'var(--bg-surface)',
+                  }}
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+                    <rect
+                      x="2"
+                      y="3"
+                      width="20"
+                      height="14"
+                      rx="2"
+                      stroke={isCurrent ? 'var(--accent)' : 'var(--text-muted)'}
+                      strokeWidth="2"
+                    />
+                    <path
+                      d="M8 21h8M12 17v4"
+                      stroke={isCurrent ? 'var(--accent)' : 'var(--text-muted)'}
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                    />
+                  </svg>
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p
+                    className="text-xs font-medium truncate"
+                    style={{ color: 'var(--text-primary)' }}
+                  >
+                    {isCurrent && (
+                      <span style={{ color: 'var(--accent)' }}>Current · </span>
+                    )}
+                    {device}
+                  </p>
+                  <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                    Started {when}
+                  </p>
+                </div>
+                {!isCurrent && (
+                  <button
+                    onClick={() => killSession(s.id)}
+                    disabled={terminating === s.id}
+                    className="text-xs px-2 py-1 rounded-lg flex-shrink-0 vx-btn"
+                    style={{
+                      color: 'var(--danger)',
+                      opacity: terminating === s.id ? 0.5 : 1,
+                    }}
+                  >
+                    {terminating === s.id ? '...' : 'Sign out'}
+                  </button>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </Card>
+  );
+}
+
 // ─── Security Tab ─────────────────────────────────────────────────────────────
 
 function SecurityTab({ session }: { session: ReturnType<typeof loadSession> }) {
@@ -580,7 +754,11 @@ function SecurityTab({ session }: { session: ReturnType<typeof loadSession> }) {
   const [otpStep, setOtpStep] = useState<'initial' | 'sent' | 'verified'>(
     'initial'
   );
-  const [otpCode, setOtpCode] = useState('');
+  const [otpDigits, setOtpDigits] = useState(['', '', '', '', '', '']);
+  const [otpTimer, setOtpTimer] = useState(0);
+
+  const otpCode = otpDigits.join('');
+  const otpExpired = otpStep === 'sent' && otpTimer <= 0;
   const [maskedEmail, setMaskedEmail] = useState('');
   const [otpLoading, setOtpLoading] = useState(false);
   const [otpError, setOtpError] = useState('');
@@ -602,9 +780,11 @@ function SecurityTab({ session }: { session: ReturnType<typeof loadSession> }) {
   async function handleSendOTP() {
     setOtpLoading(true);
     setOtpError('');
+    setOtpDigits(['', '', '', '', '', '']); // clear previous code
     try {
       const { data } = await api.post('/api/auth/otp/send');
       setMaskedEmail(data.maskedEmail);
+      setOtpTimer(60); // 60 second window
       setOtpStep('sent');
     } catch (e: any) {
       setOtpError(e.response?.data?.error ?? 'Failed to send OTP');
@@ -689,6 +869,12 @@ function SecurityTab({ session }: { session: ReturnType<typeof loadSession> }) {
     }
   }
 
+  useEffect(() => {
+    if (otpTimer <= 0) return;
+    const id = setTimeout(() => setOtpTimer((t) => t - 1), 1000);
+    return () => clearTimeout(id);
+  }, [otpTimer]);
+
   return (
     <div className="flex flex-col gap-4">
       <h2
@@ -700,6 +886,8 @@ function SecurityTab({ session }: { session: ReturnType<typeof loadSession> }) {
 
       <Card>
         <SectionLabel>Change Master Password</SectionLabel>
+        {/* Sessions section */}
+        <SessionsCard />
 
         {success && (
           <div
@@ -773,56 +961,136 @@ function SecurityTab({ session }: { session: ReturnType<typeof loadSession> }) {
           )}
 
           {otpStep === 'sent' && (
-            <div className="flex flex-col gap-2">
-              <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                Code sent to{' '}
-                <strong style={{ color: 'var(--text-secondary)' }}>
-                  {maskedEmail}
-                </strong>
-              </p>
+            <div className="flex flex-col gap-3">
+              {/* Masked email + timer */}
+              <div className="flex items-center justify-between">
+                <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                  Code sent to{' '}
+                  <strong style={{ color: 'var(--text-secondary)' }}>
+                    {maskedEmail}
+                  </strong>
+                </p>
+                <p
+                  className="text-xs font-medium"
+                  style={{
+                    color: otpTimer <= 10 ? '#EF4444' : 'var(--text-muted)',
+                  }}
+                >
+                  {otpTimer > 0 ? `${otpTimer}s` : 'Expired'}
+                </p>
+              </div>
+
               {otpError && (
                 <p className="text-xs" style={{ color: 'var(--danger)' }}>
                   {otpError}
                 </p>
               )}
+
+              {/* 6 individual boxes */}
               <div className="flex gap-2">
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  maxLength={6}
-                  value={otpCode}
-                  onChange={(e) =>
-                    setOtpCode(e.target.value.replace(/\D/g, '').slice(0, 6))
-                  }
-                  placeholder="_ _ _ _ _ _"
-                  aria-label="OTP code"
-                  className="w-36 rounded-lg px-3 py-2 text-sm font-mono outline-none text-center vx-input tracking-widest"
+                {[0, 1, 2, 3, 4, 5].map((i) => (
+                  <input
+                    key={i}
+                    id={`otp-box-${i}`}
+                    type="text"
+                    inputMode="numeric"
+                    maxLength={1}
+                    value={otpDigits[i]}
+                    disabled={otpExpired}
+                    onChange={(e) => {
+                      const digit = e.target.value.replace(/\D/g, '').slice(-1);
+                      const next = [...otpDigits];
+                      next[i] = digit;
+                      setOtpDigits(next);
+                      if (digit && i < 5)
+                        document.getElementById(`otp-box-${i + 1}`)?.focus();
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Backspace' && !otpDigits[i] && i > 0) {
+                        document.getElementById(`otp-box-${i - 1}`)?.focus();
+                      }
+                      if (e.key === 'Enter' && otpCode.length === 6)
+                        handleVerifyOTP();
+                    }}
+                    onPaste={(e) => {
+                      e.preventDefault();
+                      const pasted = e.clipboardData
+                        .getData('text')
+                        .replace(/\D/g, '')
+                        .slice(0, 6);
+                      const next = [...otpDigits];
+                      pasted.split('').forEach((d, idx) => {
+                        if (idx < 6) next[idx] = d;
+                      });
+                      setOtpDigits(next);
+                      document
+                        .getElementById(`otp-box-${Math.min(pasted.length, 5)}`)
+                        ?.focus();
+                    }}
+                    className="outline-none text-center text-sm font-semibold font-mono rounded-lg"
+                    style={{
+                      width: 40,
+                      height: 44,
+                      background: 'var(--bg-elevated)',
+                      border: otpDigits[i]
+                        ? '1.5px solid var(--accent)'
+                        : '0.5px solid var(--border)',
+                      color: 'var(--text-primary)',
+                      opacity: otpExpired ? 0.5 : 1,
+                      transition: 'border-color 0.15s',
+                    }}
+                  />
+                ))}
+
+                {/* Verify button — only while timer active */}
+                {!otpExpired && (
+                  <button
+                    onClick={handleVerifyOTP}
+                    disabled={otpLoading || otpCode.length !== 6}
+                    className="px-4 rounded-lg text-sm font-medium vx-btn-accent"
+                    style={{
+                      background: 'var(--accent)',
+                      color: '#fff',
+                      opacity: otpLoading || otpCode.length !== 6 ? 0.5 : 1,
+                      minWidth: 80,
+                    }}
+                  >
+                    {otpLoading ? '...' : 'Verify'}
+                  </button>
+                )}
+              </div>
+
+              {/* Timer progress bar */}
+              <div
+                className="h-0.5 rounded-full overflow-hidden"
+                style={{ background: 'var(--border)' }}
+              >
+                <div
+                  className="h-full rounded-full transition-all duration-1000"
                   style={{
-                    background: 'var(--bg-elevated)',
-                    border: '0.5px solid var(--border)',
-                    color: 'var(--text-primary)',
-                    letterSpacing: 8,
+                    width: `${(otpTimer / 60) * 100}%`,
+                    background: otpTimer <= 10 ? '#EF4444' : 'var(--accent)',
                   }}
                 />
-                <button
-                  onClick={handleVerifyOTP}
-                  disabled={otpLoading || otpCode.length !== 6}
-                  className="px-4 py-2 rounded-lg text-sm font-medium vx-btn-accent"
-                  style={{
-                    background: 'var(--accent)',
-                    color: '#fff',
-                    opacity: otpLoading || otpCode.length !== 6 ? 0.6 : 1,
-                  }}
-                >
-                  {otpLoading ? 'Verifying...' : 'Verify'}
-                </button>
+              </div>
+
+              {/* Resend — only when expired */}
+              <div className="flex items-center gap-2">
+                {otpExpired && (
+                  <p className="text-xs" style={{ color: '#EF4444' }}>
+                    Code expired.
+                  </p>
+                )}
                 <button
                   onClick={handleSendOTP}
-                  disabled={otpLoading}
-                  className="px-3 py-2 rounded-lg text-xs vx-btn"
-                  style={{ color: 'var(--text-muted)' }}
+                  disabled={!otpExpired && otpTimer > 0}
+                  className="text-xs vx-btn"
+                  style={{
+                    color: otpExpired ? 'var(--accent)' : 'var(--text-muted)',
+                    opacity: !otpExpired && otpTimer > 0 ? 0.4 : 1,
+                  }}
                 >
-                  Resend
+                  Resend code
                 </button>
               </div>
             </div>
@@ -1193,19 +1461,37 @@ function DataTab({ session }: { session: ReturnType<typeof loadSession> }) {
   const { clearSession } = useVaultStore();
   const navigate = useNavigate();
 
+  const [deletePassword, setDeletePassword] = useState('');
+  const [deleteError, setDeleteError] = useState('');
+  const [deleteLoading, setDeleteLoading] = useState(false);
+
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+
   async function handleDeleteAccount() {
-    const confirmed = window.confirm(
-      'This permanently deletes your account and ALL vault data.\n\nThis cannot be undone. Type "delete" to confirm.'
-    );
-    if (!confirmed) return;
+    if (!deletePassword) return setDeleteError('Enter your master password');
+    if (!session) return setDeleteError('Session not found');
+
+    setDeleteLoading(true);
+    setDeleteError('');
     try {
-      await api.delete('/api/auth/account');
+      // Derive authKey from master password locally
+      const { authKey } = await deriveKeys(
+        deletePassword,
+        session.kdfSalt,
+        session.kdfParams
+      );
+      await api.delete('/api/auth/account', {
+        data: { authKey: toHex(authKey) },
+      });
+
       clearStoredSession();
       clearSession();
       navigate('/login');
-      toast('Account deleted', 'info');
-    } catch {
-      toast('Failed to delete account. Try again.', 'error');
+      toast('Account deleted. Export sent to your email.', 'info');
+    } catch (e: any) {
+      setDeleteError(e.response?.data?.error ?? 'Failed to delete account');
+    } finally {
+      setDeleteLoading(false);
     }
   }
 
@@ -1508,7 +1794,7 @@ function DataTab({ session }: { session: ReturnType<typeof loadSession> }) {
         )}
       </Card>
 
-      {/* Danger zone */}
+      {/* Danger zone card */}
       <Card>
         <SectionLabel>Danger Zone</SectionLabel>
         <div
@@ -1529,23 +1815,116 @@ function DataTab({ session }: { session: ReturnType<typeof loadSession> }) {
               className="text-xs mt-0.5"
               style={{ color: 'var(--text-muted)' }}
             >
-              Permanently removes your account and all vault data. Cannot be
-              undone.
+              Exports your data, emails it to you, then permanently deletes
+              everything.
             </p>
           </div>
           <button
-            aria-label="Delete account"
+            onClick={() => {
+              setShowDeleteModal(true);
+              setDeletePassword('');
+              setDeleteError('');
+            }}
             className="px-3 py-2 rounded-lg text-xs font-medium flex-shrink-0 vx-btn-danger"
             style={{
               color: 'var(--danger)',
               border: '0.5px solid var(--danger)',
             }}
-            onClick={handleDeleteAccount}
           >
             Delete account
           </button>
         </div>
       </Card>
+
+      {/* Delete confirmation modal */}
+      {showDeleteModal && (
+        <div
+          className="fixed inset-0 flex items-center justify-center px-4 z-50"
+          style={{ background: 'rgba(0,0,0,0.8)' }}
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setShowDeleteModal(false);
+          }}
+        >
+          <div
+            className="w-full max-w-sm rounded-2xl p-6"
+            style={{
+              background: 'var(--bg-surface)',
+              border: '0.5px solid var(--danger)',
+            }}
+          >
+            <h3
+              className="text-sm font-medium mb-1"
+              style={{ color: 'var(--danger)' }}
+            >
+              ⚠ Delete account permanently
+            </h3>
+            <p className="text-xs mb-4" style={{ color: 'var(--text-muted)' }}>
+              We'll email your encrypted vault data before deleting. This cannot
+              be undone.
+            </p>
+
+            {deleteError && (
+              <div
+                className="rounded-lg px-3 py-2 mb-3 text-sm"
+                style={{ background: '#2A0000', color: 'var(--danger)' }}
+              >
+                {deleteError}
+              </div>
+            )}
+
+            <div className="flex flex-col gap-3">
+              <div>
+                <label
+                  className="block text-xs font-medium mb-1"
+                  style={{ color: 'var(--text-secondary)' }}
+                >
+                  Enter your master password to confirm
+                </label>
+                <input
+                  type="password"
+                  value={deletePassword}
+                  onChange={(e) => setDeletePassword(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleDeleteAccount()}
+                  aria-label="Master password for deletion"
+                  className="w-full rounded-lg px-3 py-2.5 text-sm outline-none vx-input"
+                  style={{
+                    background: 'var(--bg-elevated)',
+                    border: '0.5px solid var(--danger)',
+                    color: 'var(--text-primary)',
+                  }}
+                  placeholder="Your master password"
+                  autoFocus
+                />
+              </div>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setShowDeleteModal(false)}
+                  className="flex-1 rounded-lg py-2.5 text-sm vx-btn-ghost"
+                  style={{
+                    background: 'var(--bg-elevated)',
+                    color: 'var(--text-secondary)',
+                    border: '0.5px solid var(--border)',
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleDeleteAccount}
+                  disabled={deleteLoading}
+                  className="flex-1 rounded-lg py-2.5 text-sm font-medium vx-btn-danger"
+                  style={{
+                    background: 'var(--danger)',
+                    color: '#fff',
+                    opacity: deleteLoading ? 0.7 : 1,
+                  }}
+                >
+                  {deleteLoading ? 'Deleting...' : 'Delete forever'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Export password modal */}
       {showExportModal && (

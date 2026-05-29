@@ -603,8 +603,8 @@ export default function Dashboard() {
     <div
       className="flex"
       style={{
-        minHeight: '100vh',
-        alignItems: 'stretch',
+        height: '100vh',
+        overflow: 'hidden',
         background: 'var(--bg-base)',
       }}
     >
@@ -626,7 +626,10 @@ export default function Dashboard() {
       />
 
       {/* Main */}
-      <div className="flex-1 flex flex-col min-w-0">
+      <div
+        className="flex-1 flex flex-col min-w-0"
+        style={{ overflowY: 'auto' }}
+      >
         {/* Mobile top bar */}
         {isMobile && (
           <header

@@ -17,6 +17,7 @@ import {
   welcomeEmail,
   passwordChangedEmail,
   newLoginEmail,
+  accountDeletionExportEmail,
 } from '../../utils/emailTemplates';
 
 const REFRESH_TTL = 7 * 24 * 60 * 60; // 7 days in seconds
@@ -270,7 +271,52 @@ export async function changeUserPassword(
   logAuditEvent(userId, 'password_changed', {});
 }
 
-export async function deleteUserAccount(userId: string): Promise<void> {
+export async function deleteUserAccount(
+  userId: string,
+  authKey: string
+): Promise<void> {
+  // Step 1: Verify password before deletion
+  const userRow = await pool.query(
+    'SELECT email, auth_hash FROM users WHERE id = $1',
+    [userId]
+  );
+  if (!userRow.rows.length) throw new Error('USER_NOT_FOUND');
+  const { email, auth_hash } = userRow.rows[0];
+
+  const valid = await verifyAuthKey(auth_hash, authKey);
+  if (!valid) throw new Error('INVALID_CREDENTIALS');
+
+  // Step 2: Get all vault items for export email
+  const itemsResult = await pool.query(
+    `SELECT vi.type, vi.encrypted_data, vi.iv, vi.category, vi.created_at
+     FROM vault_items vi
+     JOIN vaults v ON vi.vault_id = v.id
+     WHERE v.user_id = $1 AND vi.deleted_at IS NULL`,
+    [userId]
+  );
+
+  // Step 3: Send export email BEFORE deletion
+  if (itemsResult.rows.length > 0) {
+    const exportData = {
+      version: '1.0',
+      app: 'VaultX',
+      exportedAt: new Date().toISOString(),
+      itemCount: itemsResult.rows.length,
+      note: 'This is your encrypted vault export. Items are encrypted and require your master password to decrypt.',
+      items: itemsResult.rows,
+    };
+
+    sendEmail({
+      to: email,
+      subject: 'VaultX — Your vault data export before account deletion',
+      html: accountDeletionExportEmail(
+        email,
+        JSON.stringify(exportData, null, 2)
+      ),
+    }).catch(() => {}); // don't block deletion on email failure
+  }
+
+  // Step 4: Delete all user data
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
