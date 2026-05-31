@@ -210,3 +210,41 @@ export function accountDeletionExportEmail(
   `
   );
 }
+
+export function forgotPasswordEmail(email: string, code: string): string {
+  return `<!DOCTYPE html>
+<html>
+<body style="margin:0;padding:0;background:#0E0E0E;font-family:sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0">
+    <tr><td align="center" style="padding:40px 16px;">
+      <table width="480" style="max-width:480px;width:100%;">
+        <tr><td style="text-align:center;padding-bottom:24px;">
+          <span style="color:#F0F0F0;font-weight:600;font-size:18px;">🔐 VaultX</span>
+        </td></tr>
+        <tr><td style="background:#141414;border-radius:16px;border:0.5px solid #2A2A2A;padding:32px;">
+          <h2 style="color:#F0F0F0;font-size:18px;margin:0 0 8px 0;">Reset your master password</h2>
+          <p style="color:#888;font-size:14px;margin:0 0 16px 0;">
+            Enter this code to reset your password. Note: this will permanently delete your vault data.
+          </p>
+          <div style="background:#2A1A00;border-radius:12px;padding:20px;text-align:center;margin-bottom:16px;">
+            <span style="color:#F59E0B;font-size:36px;font-weight:700;letter-spacing:12px;">${code}</span>
+          </div>
+          <div style="background:#2A0000;border-radius:8px;padding:12px;margin-bottom:16px;">
+            <p style="color:#EF4444;font-size:13px;margin:0;">
+              ⚠ <strong>Warning:</strong> Resetting your password will permanently delete all saved passwords. 
+              This cannot be undone.
+            </p>
+          </div>
+          <p style="color:#666;font-size:13px;margin:0;">
+            Code expires in 10 minutes. If you didn't request this, ignore this email.
+          </p>
+        </td></tr>
+        <tr><td style="padding-top:24px;text-align:center;">
+          <p style="color:#444;font-size:12px;margin:0;">Sent to ${email}</p>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`;
+}

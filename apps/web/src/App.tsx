@@ -14,6 +14,7 @@ import GoogleUnlock from './pages/GoogleUnlock';
 import { ToastContainer } from './components/Toast';
 import ErrorBoundary from './components/ErrorBoundary';
 import StatsPage from './pages/Stats';
+import ForgotPassword from './pages/ForgotPassword';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { userId, vaultKey } = useVaultStore();
@@ -84,6 +85,7 @@ export default function App() {
             }
           />
           <Route path="/share/:id" element={<ShareView />} />
+          <Route path="/forgot-password" element={<ForgotPassword />} />
           <Route path="/auth/google/setup" element={<GoogleSetup />} />{' '}
           {/* ADD - next section */}
           <Route path="/auth/google/unlock" element={<GoogleUnlock />} />{' '}

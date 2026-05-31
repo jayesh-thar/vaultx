@@ -62,8 +62,9 @@ export async function registerUser(input: RegisterInput) {
   } = input;
 
   const existing = await pool.query('SELECT id FROM users WHERE email = $1', [
-    email,
+    email.toLowerCase().trim(),
   ]);
+
   if (existing.rows.length > 0) throw new Error('EMAIL_EXISTS');
 
   // Hash authKey AGAIN server-side — defense in depth
@@ -79,7 +80,7 @@ export async function registerUser(input: RegisterInput) {
       `INSERT INTO users (email, auth_hash, auth_salt, kdf_salt, kdf_params, vault_key_enc, vault_key_iv)
        VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
       [
-        email,
+        email.toLowerCase().trim(),
         authHash,
         authSalt,
         kdfSalt,
@@ -122,8 +123,8 @@ export async function loginUser(input: LoginInput, deviceInfo: object) {
 
   const result = await pool.query(
     `SELECT id, auth_hash, kdf_salt, kdf_params, vault_key_enc, vault_key_iv
-     FROM users WHERE email = $1`,
-    [email]
+   FROM users WHERE email = $1`,
+    [email.toLowerCase().trim()]
   );
 
   // Same error for "user not found" and "wrong password"
@@ -165,12 +166,18 @@ export async function loginUser(input: LoginInput, deviceInfo: object) {
 export async function getPreloginData(email: string) {
   const result = await pool.query(
     'SELECT kdf_salt, kdf_params FROM users WHERE email = $1',
-    [email]
+    [email.toLowerCase().trim()] // ← normalize email
   );
   if (result.rows.length === 0) throw new Error('USER_NOT_FOUND');
+
+  const rawParams = result.rows[0].kdf_params;
+  // Parse whether TEXT column (string) or JSONB column (object)
+  const kdfParams =
+    typeof rawParams === 'string' ? JSON.parse(rawParams) : rawParams;
+
   return {
     kdfSalt: result.rows[0].kdf_salt as string,
-    kdfParams: result.rows[0].kdf_params as object,
+    kdfParams,
   };
 }
 

@@ -69,9 +69,10 @@ export default function Register() {
         masterKey,
         derivedKey
       );
+      const normalizedEmail = email.toLowerCase().trim();
 
       const { data } = await api.post<AuthResponse>('/api/auth/register', {
-        email,
+        email: normalizedEmail,
         authKey: toHex(authKey),
         authSalt, // now a real hex string
         kdfSalt,
@@ -81,10 +82,10 @@ export default function Register() {
       });
 
       setAuth(data.userId, data.accessToken);
-      saveKdfLocally(email, kdfSalt, DEFAULT_KDF_PARAMS);
+      saveKdfLocally(normalizedEmail, kdfSalt, DEFAULT_KDF_PARAMS);
       setVaultKey(masterKey);
       saveSession({
-        email,
+        email: normalizedEmail,
         userId: data.userId,
         kdfSalt,
         kdfParams: DEFAULT_KDF_PARAMS,

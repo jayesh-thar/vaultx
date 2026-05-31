@@ -12,6 +12,11 @@ import {
 import { registerSchema, loginSchema } from './auth.validation';
 import { pool } from '../../db/pool';
 import { redis } from '../../db/redis';
+import { sendEmail } from '../../utils/mailer';
+import {
+  forgotPasswordEmail,
+  passwordChangedEmail,
+} from '../../utils/emailTemplates';
 
 const COOKIE_OPTIONS = {
   httpOnly: true, // JS can't read this cookie
@@ -187,6 +192,167 @@ export async function terminateAllOtherSessions(
     res.json({ message: 'All other sessions terminated' });
   } catch {
     res.status(500).json({ error: 'Failed' });
+  }
+}
+
+export async function forgotPasswordSendOTP(
+  req: Request,
+  res: Response
+): Promise<void> {
+  try {
+    const { email } = req.body;
+    if (!email) {
+      res.status(400).json({ error: 'Email required' });
+      return;
+    }
+
+    const normalizedEmail = email.toLowerCase().trim();
+
+    // Check email exists (don't reveal if it does)
+    const userRow = await pool.query('SELECT id FROM users WHERE email = $1', [
+      normalizedEmail,
+    ]);
+
+    if (userRow.rows.length > 0) {
+      const userId = userRow.rows[0].id;
+      const code = Math.floor(100000 + Math.random() * 900000).toString();
+      await redis.setex(
+        `forgot_otp:${userId}`,
+        600,
+        JSON.stringify({ code, attempts: 0 })
+      );
+
+      await sendEmail({
+        to: normalizedEmail,
+        subject: `${code} — VaultX password reset`,
+        html: forgotPasswordEmail(normalizedEmail, code),
+      });
+    }
+
+    // Always return success (don't reveal if email exists)
+    const masked = normalizedEmail.replace(/(.{1}).+(@.+)/, '$1***$2');
+    res.json({
+      message: 'If an account exists, a code was sent.',
+      maskedEmail: masked,
+    });
+  } catch {
+    res.status(500).json({ error: 'Failed to send reset code' });
+  }
+}
+
+export async function forgotPasswordReset(
+  req: Request,
+  res: Response
+): Promise<void> {
+  try {
+    const {
+      email,
+      code,
+      newAuthKey,
+      newAuthSalt,
+      newKdfSalt,
+      newKdfParams,
+      newVaultKeyEnc,
+      newVaultKeyIv,
+    } = req.body;
+
+    if (!email || !code || !newAuthKey) {
+      res.status(400).json({ error: 'Missing required fields' });
+      return;
+    }
+
+    const normalizedEmail = email.toLowerCase().trim();
+    const userRow = await pool.query('SELECT id FROM users WHERE email = $1', [
+      normalizedEmail,
+    ]);
+    if (!userRow.rows.length) {
+      res.status(400).json({ error: 'Invalid reset code' });
+      return;
+    }
+
+    const userId = userRow.rows[0].id;
+    const raw = await redis.get(`forgot_otp:${userId}`);
+    if (!raw) {
+      res.status(400).json({ error: 'Reset code expired. Request a new one.' });
+      return;
+    }
+
+    const { code: stored, attempts } = JSON.parse(raw);
+    if (attempts >= 3) {
+      await redis.del(`forgot_otp:${userId}`);
+      res.status(400).json({ error: 'Too many attempts. Request a new code.' });
+      return;
+    }
+
+    if (code !== stored) {
+      await redis.set(
+        `forgot_otp:${userId}`,
+        JSON.stringify({ code: stored, attempts: attempts + 1 }),
+        'KEEPTTL'
+      );
+      res.status(400).json({ error: 'Incorrect code. Try again.' });
+      return;
+    }
+
+    // Code correct — delete OTP
+    await redis.del(`forgot_otp:${userId}`);
+
+    // Delete ALL vault items (zero-knowledge: can't migrate without old password)
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query(
+        'DELETE FROM vault_items WHERE vault_id IN (SELECT id FROM vaults WHERE user_id = $1)',
+        [userId]
+      );
+
+      // Update credentials with new password
+      const { hashAuthKey } = await import('../../utils/hash.js');
+      const newAuthHash = await hashAuthKey(newAuthKey);
+
+      await client.query(
+        `UPDATE users SET
+          auth_hash = $1, auth_salt = $2, kdf_salt = $3,
+          kdf_params = $4, vault_key_enc = $5, vault_key_iv = $6,
+          updated_at = NOW()
+         WHERE id = $7`,
+        [
+          newAuthHash,
+          newAuthSalt,
+          newKdfSalt,
+          JSON.stringify(newKdfParams),
+          newVaultKeyEnc,
+          newVaultKeyIv,
+          userId,
+        ]
+      );
+
+      // Terminate all sessions
+      await client.query('DELETE FROM sessions WHERE user_id = $1', [userId]);
+      await client.query('COMMIT');
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+
+    // Send confirmation email
+    sendEmail({
+      to: normalizedEmail,
+      subject: 'VaultX — Password reset complete',
+      html: passwordChangedEmail(
+        normalizedEmail.split('@')[0],
+        normalizedEmail,
+        {}
+      ),
+    }).catch(() => {});
+
+    res.json({
+      message: 'Password reset successful. Your vault has been cleared.',
+    });
+  } catch {
+    res.status(500).json({ error: 'Reset failed. Please try again.' });
   }
 }
 

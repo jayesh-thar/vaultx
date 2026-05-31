@@ -45,5 +45,7 @@ router.post('/otp/verify', authenticate, verifyOTP);
 router.get('/sessions', authenticate, listSessions);
 router.delete('/sessions/:sessionId', authenticate, terminateSession);
 router.delete('/sessions', authenticate, terminateAllOtherSessions);
+router.post('/forgot-password/send-otp', forgotPasswordSendOTP);
+router.post('/forgot-password/reset', forgotPasswordReset);
 
 export default router;

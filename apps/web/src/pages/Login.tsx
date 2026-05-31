@@ -30,22 +30,38 @@ export default function Login() {
     setLoading(true);
     setError('');
 
+    const normalizedEmail = email.toLowerCase().trim();
+
     try {
       setMsg('Verifying identity...');
-      const preRes = await api.post('/api/auth/prelogin', { email });
-      const { kdfSalt, kdfParams } = preRes.data;
+      const preRes = await api.post('/api/auth/prelogin', {
+        email: normalizedEmail,
+      });
+      const { kdfSalt, kdfParams: rawParams } = preRes.data;
+
+      // Guard: fake response means email not found
+      if (!kdfSalt || kdfSalt === 'notfound' || kdfSalt.length < 32) {
+        setError('No account found with this email address.');
+        return;
+      }
+
+      // Parse kdfParams whether it's a string (TEXT column) or object (JSONB column)
+      const kdfParams =
+        typeof rawParams === 'string'
+          ? JSON.parse(rawParams)
+          : (rawParams ?? DEFAULT_KDF_PARAMS);
 
       setMsg('Deriving keys...');
-      await new Promise((r) => setTimeout(r, 50)); // let UI render before heavy crypto
+      await new Promise((r) => setTimeout(r, 50));
       const { authKey, vaultKey: derivedKey } = await deriveKeys(
         password,
         kdfSalt,
-        kdfParams ?? DEFAULT_KDF_PARAMS
+        kdfParams
       );
 
       setMsg('Decrypting vault...');
       const { data } = await api.post('/api/auth/login', {
-        email,
+        email: normalizedEmail,
         authKey: toHex(authKey),
       });
 
@@ -57,16 +73,22 @@ export default function Login() {
       setAuth(data.userId, data.accessToken);
       setVaultKey(masterKey);
       saveSession({
-        email,
+        email: normalizedEmail,
         userId: data.userId,
         kdfSalt,
-        kdfParams: kdfParams ?? DEFAULT_KDF_PARAMS,
+        kdfParams,
         vaultKeyEnc: data.vaultKeyEnc,
         vaultKeyIv: data.vaultKeyIv,
       });
       navigate('/dashboard');
-    } catch {
-      setError('Invalid email or password.');
+    } catch (err: any) {
+      if (err.response?.status === 401) {
+        setError('Incorrect password. Please try again.');
+      } else if (err.response?.status === 429) {
+        setError('Too many attempts. Please wait a few minutes.');
+      } else {
+        setError('Something went wrong. Check your connection and try again.');
+      }
     } finally {
       setLoading(false);
       setMsg('');
@@ -156,12 +178,21 @@ export default function Login() {
 
           {/* Password */}
           <div>
-            <label
-              className="block text-xs font-medium mb-1.5"
-              style={{ color: 'var(--text-secondary)' }}
-            >
-              Master Password
-            </label>
+            <div className="flex items-center justify-between mb-1.5">
+              <label
+                className="block text-xs font-medium"
+                style={{ color: 'var(--text-secondary)' }}
+              >
+                Master Password
+              </label>
+              <Link
+                to="/forgot-password"
+                className="text-xs"
+                style={{ color: 'var(--text-muted)' }}
+              >
+                Forgot password?
+              </Link>
+            </div>
             <div className="relative">
               <input
                 type={showPass ? 'text' : 'password'}
