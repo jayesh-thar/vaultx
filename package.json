@@ -4,7 +4,11 @@
   "private": true,
   "workspaces": [
     "apps/*",
-    "packages/*"
+    "packages/*",
+    "apps/api",
+    "apps/web",
+    "apps/extension",
+    "packages/shared"
   ],
   "scripts": {
     "dev:api": "npm run dev --workspace=apps/api",
