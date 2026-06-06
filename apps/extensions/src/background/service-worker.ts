@@ -10,6 +10,10 @@ import type {
   GetVaultItemsResponse,
   GetItemsForDomainResponse,
   SaveCredentialsResponse,
+  VerifyCardPinResponse,
+  SetCardPinResponse,
+  CheckCardPinExistsResponse,
+  CheckHasCardsResponse,
 } from '../lib/messages';
 import type {
   SessionData,
@@ -71,6 +75,14 @@ async function handleMessage(msg: ExtensionMessage): Promise<unknown> {
       return handleGetItemsForDomain(msg.payload);
     case MSG.SAVE_CREDENTIALS:
       return handleSaveCredentials(msg.payload);
+    case MSG.CHECK_CARD_PIN_EXISTS:
+      return handleCheckCardPinExists();
+    case MSG.SET_CARD_PIN:
+      return handleSetCardPin(msg.payload);
+    case MSG.VERIFY_CARD_PIN:
+      return handleVerifyCardPin(msg.payload);
+    case MSG.CHECK_HAS_CARDS:
+      return handleCheckHasCards();
     default:
       return { success: false, error: 'Unknown message type' };
   }
@@ -253,4 +265,72 @@ async function handleSaveCredentials(payload: {
     const message = err instanceof Error ? err.message : 'Failed to save';
     return { success: false, error: message };
   }
+}
+
+async function handleCheckCardPinExists(): Promise<CheckCardPinExistsResponse> {
+  const session = await getSession();
+  if (!session) return { exists: false };
+  try {
+    const res = await apiRequest<{ exists: boolean }>(
+      '/api/auth/card-pin/exists',
+      { token: session.accessToken }
+    );
+    return { exists: res.exists };
+  } catch {
+    return { exists: false };
+  }
+}
+
+async function handleSetCardPin(payload: {
+  pin: string;
+}): Promise<SetCardPinResponse> {
+  const session = await getSession();
+  if (!session) return { success: false, error: 'Not logged in' };
+  try {
+    await apiRequest('/api/auth/card-pin/set', {
+      method: 'POST',
+      token: session.accessToken,
+      body: { pin: payload.pin },
+    });
+    // Cache PIN verified state for 5 minutes in session
+    await chrome.storage.session.set({
+      cardPinVerifiedAt: Date.now(),
+    });
+    return { success: true };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Failed',
+    };
+  }
+}
+
+async function handleVerifyCardPin(payload: {
+  pin: string;
+}): Promise<VerifyCardPinResponse> {
+  const session = await getSession();
+  if (!session) return { success: false, error: 'Not logged in' };
+  try {
+    await apiRequest('/api/auth/card-pin/verify', {
+      method: 'POST',
+      token: session.accessToken,
+      body: { pin: payload.pin },
+    });
+    // Cache verified timestamp — cards stay open for 5 min
+    await chrome.storage.session.set({
+      cardPinVerifiedAt: Date.now(),
+    });
+    return { success: true };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Failed',
+    };
+  }
+}
+
+async function handleCheckHasCards(): Promise<CheckHasCardsResponse> {
+  const vaultRes = await handleGetVaultItems();
+  if (!vaultRes.success || !vaultRes.items) return { hasCards: false };
+  return { hasCards: vaultRes.items.some((i) => i.type === 'card') };
 }

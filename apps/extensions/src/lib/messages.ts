@@ -12,6 +12,10 @@ export const MSG = {
   GET_ITEMS_FOR_DOMAIN: 'GET_ITEMS_FOR_DOMAIN',
   AUTOFILL_CREDENTIALS: 'AUTOFILL_CREDENTIALS',
   SAVE_CREDENTIALS: 'SAVE_CREDENTIALS',
+  CHECK_CARD_PIN_EXISTS: 'CHECK_CARD_PIN_EXISTS',
+  SET_CARD_PIN: 'SET_CARD_PIN',
+  VERIFY_CARD_PIN: 'VERIFY_CARD_PIN',
+  CHECK_HAS_CARDS: 'CHECK_HAS_CARDS',
 } as const;
 
 // --- Request shapes (what the sender sends) ---
@@ -37,13 +41,48 @@ export interface SaveCredentialsRequest {
   payload: { title: string; username: string; password: string; url: string };
 }
 
+export interface CheckCardPinExistsRequest {
+  type: typeof MSG.CHECK_CARD_PIN_EXISTS;
+}
+export interface SetCardPinRequest {
+  type: typeof MSG.SET_CARD_PIN;
+  payload: { pin: string };
+}
+export interface VerifyCardPinRequest {
+  type: typeof MSG.VERIFY_CARD_PIN;
+  payload: { pin: string };
+}
+
+export interface CheckCardPinExistsResponse {
+  exists: boolean;
+}
+export interface SetCardPinResponse {
+  success: boolean;
+  error?: string;
+}
+export interface VerifyCardPinResponse {
+  success: boolean;
+  error?: string;
+}
+
+export interface CheckHasCardsRequest {
+  type: typeof MSG.CHECK_HAS_CARDS;
+}
+export interface CheckHasCardsResponse {
+  hasCards: boolean;
+}
+
 export type ExtensionMessage =
   | CheckSessionRequest
   | LoginRequest
   | LogoutRequest
   | GetVaultItemsRequest
   | GetItemsForDomainRequest
-  | SaveCredentialsRequest;
+  | SaveCredentialsRequest
+  | CheckCardPinExistsRequest
+  | SetCardPinRequest
+  | VerifyCardPinRequest
+  | CheckHasCardsRequest;
 
 // --- Response shapes (what the service worker sends back) ---
 export interface CheckSessionResponse {

@@ -12,6 +12,10 @@ import {
   terminateAllOtherSessions,
   forgotPasswordSendOTP,
   forgotPasswordReset,
+  cardPinExists,
+  setCardPin,
+  verifyCardPin,
+  resetCardPin,
 } from './auth.controller';
 import { authenticate } from '../../middleware/authenticate';
 import { validateEmailDomain } from '../../middleware/emailValidator';
@@ -49,5 +53,9 @@ router.delete('/sessions/:sessionId', authenticate, terminateSession);
 router.delete('/sessions', authenticate, terminateAllOtherSessions);
 router.post('/forgot-password/send-otp', forgotPasswordSendOTP);
 router.post('/forgot-password/reset', forgotPasswordReset);
+router.get('/card-pin/exists', authenticate, cardPinExists);
+router.post('/card-pin/set', authenticate, setCardPin);
+router.post('/card-pin/verify', authenticate, verifyCardPin);
+router.delete('/card-pin', authenticate, resetCardPin);
 
 export default router;

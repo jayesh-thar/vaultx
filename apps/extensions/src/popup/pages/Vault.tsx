@@ -136,7 +136,13 @@ export default function Vault({ onLogout }: Props) {
           </div>
         )}
         {filtered.map((item) => (
-          <VaultItem key={item.id} item={item} />
+          <VaultItem
+            key={item.id}
+            item={item}
+            onDeleted={(id) =>
+              setItems((prev) => prev.filter((i) => i.id !== id))
+            }
+          />
         ))}
       </div>
 

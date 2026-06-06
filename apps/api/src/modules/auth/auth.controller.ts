@@ -390,3 +390,98 @@ export async function logout(req: Request, res: Response): Promise<void> {
     res.status(500).json({ error: 'Logout failed' });
   }
 }
+
+export async function cardPinExists(
+  req: Request,
+  res: Response
+): Promise<void> {
+  try {
+    const result = await pool.query(
+      'SELECT card_pin_hash FROM users WHERE id = $1',
+      [req.user!.userId]
+    );
+    res.json({ exists: !!result.rows[0]?.card_pin_hash });
+  } catch {
+    res.status(500).json({ error: 'Failed' });
+  }
+}
+
+export async function setCardPin(req: Request, res: Response): Promise<void> {
+  try {
+    const { pin } = req.body;
+    if (!pin || !/^\d{4,8}$/.test(pin)) {
+      res.status(400).json({ error: 'PIN must be 4-8 digits' });
+      return;
+    }
+    const { hashAuthKey } = await import('../../utils/hash.js');
+    const pinHash = await hashAuthKey(pin);
+    await pool.query('UPDATE users SET card_pin_hash = $1 WHERE id = $2', [
+      pinHash,
+      req.user!.userId,
+    ]);
+    res.json({ success: true });
+  } catch {
+    res.status(500).json({ error: 'Failed to set PIN' });
+  }
+}
+
+export async function verifyCardPin(
+  req: Request,
+  res: Response
+): Promise<void> {
+  try {
+    const { pin } = req.body;
+    if (!pin) {
+      res.status(400).json({ error: 'PIN required' });
+      return;
+    }
+    const result = await pool.query(
+      'SELECT card_pin_hash FROM users WHERE id = $1',
+      [req.user!.userId]
+    );
+    const hash = result.rows[0]?.card_pin_hash;
+    if (!hash) {
+      res.status(404).json({ error: 'No PIN set' });
+      return;
+    }
+    const { verifyAuthKey } = await import('../../utils/hash.js');
+    const valid = await verifyAuthKey(hash, pin);
+    if (!valid) {
+      res.status(401).json({ error: 'Incorrect PIN' });
+      return;
+    }
+    res.json({ success: true });
+  } catch {
+    res.status(500).json({ error: 'Failed' });
+  }
+}
+
+export async function resetCardPin(req: Request, res: Response): Promise<void> {
+  try {
+    const { authKey } = req.body;
+    if (!authKey) {
+      res.status(400).json({ error: 'Master password required' });
+      return;
+    }
+    const userRow = await pool.query(
+      'SELECT auth_hash FROM users WHERE id = $1',
+      [req.user!.userId]
+    );
+    if (!userRow.rows.length) {
+      res.status(404).json({ error: 'User not found' });
+      return;
+    }
+    const { verifyAuthKey } = await import('../../utils/hash.js');
+    const valid = await verifyAuthKey(userRow.rows[0].auth_hash, authKey);
+    if (!valid) {
+      res.status(401).json({ error: 'Incorrect master password' });
+      return;
+    }
+    await pool.query('UPDATE users SET card_pin_hash = NULL WHERE id = $1', [
+      req.user!.userId,
+    ]);
+    res.json({ success: true });
+  } catch {
+    res.status(500).json({ error: 'Failed to reset PIN' });
+  }
+}

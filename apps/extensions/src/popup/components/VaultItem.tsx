@@ -1,8 +1,10 @@
 import { useState } from 'react';
 import type { DecryptedItem } from '../../types';
+import CardPinGate from './CardPinGate';
 
 interface Props {
   item: DecryptedItem;
+  onDeleted?: (id: string) => void; // parent removes item from list
 }
 
 const TYPE_ICON: Record<string, string> = {
@@ -11,26 +13,21 @@ const TYPE_ICON: Record<string, string> = {
   card: '💳',
 };
 
-// PIN for card reveal — stored per-session in component state
-// Production note: this is "peek protection", not encryption
-// The vault is already decrypted in memory; PIN just prevents casual shoulder-surfing
-const CARD_PIN_KEY = 'vaultx_card_pin';
+const PIN_DURATION = 5 * 60 * 1000;
 
-function getStoredPin(): string | null {
-  return localStorage.getItem(CARD_PIN_KEY);
+async function getPinSessionValid(): Promise<boolean> {
+  const r = await chrome.storage.session.get('cardPinVerifiedAt');
+  const ts = r.cardPinVerifiedAt as number | undefined;
+  return !!ts && Date.now() - ts < PIN_DURATION;
 }
 
-function savePin(pin: string) {
-  localStorage.setItem(CARD_PIN_KEY, pin);
-}
-
-export default function VaultItem({ item }: Props) {
+export default function VaultItem({ item, onDeleted }: Props) {
   const [copied, setCopied] = useState<string | null>(null);
-  const [expanded, setExpanded] = useState(false); // for notes
-  const [cardUnlocked, setCardUnlocked] = useState(false); // for cards
-  const [pinInput, setPinInput] = useState('');
-  const [pinMode, setPinMode] = useState<'verify' | 'set' | null>(null);
-  const [pinError, setPinError] = useState('');
+  const [expanded, setExpanded] = useState(false);
+  const [cardUnlocked, setCardUnlocked] = useState(false);
+  const [showPinGate, setShowPinGate] = useState<'view' | 'delete' | null>(
+    null
+  );
 
   function copy(value: string, field: string) {
     navigator.clipboard.writeText(value);
@@ -44,36 +41,45 @@ export default function VaultItem({ item }: Props) {
     chrome.tabs.create({ url });
   }
 
-  function handleCardClick() {
+  async function handleCardViewClick() {
     if (cardUnlocked) {
       setCardUnlocked(false);
+      await chrome.storage.session.remove('cardPinVerifiedAt');
       return;
     }
-    const existing = getStoredPin();
-    setPinMode(existing ? 'verify' : 'set');
-    setPinInput('');
-    setPinError('');
+    // Check session first — avoid showing PIN gate if still valid
+    const valid = await getPinSessionValid();
+    if (valid) {
+      setCardUnlocked(true);
+      return;
+    }
+    setShowPinGate('view');
   }
 
-  function handlePinSubmit() {
-    const existing = getStoredPin();
-    if (pinMode === 'set') {
-      if (pinInput.length < 4) {
-        setPinError('PIN must be 4 digits');
-        return;
-      }
-      savePin(pinInput);
-      setCardUnlocked(true);
-      setPinMode(null);
+  async function handleDeleteClick() {
+    if (item.type === 'card') {
+      // Cards always require PIN to delete
+      setShowPinGate('delete');
     } else {
-      if (pinInput === existing) {
-        setCardUnlocked(true);
-        setPinMode(null);
-        setPinError('');
-      } else {
-        setPinError('Incorrect PIN');
-        setPinInput('');
-      }
+      // Non-card items: confirm then delete directly
+      if (!confirm(`Delete "${item.payload.title}"?`)) return;
+      await deleteItem();
+    }
+  }
+
+  async function deleteItem() {
+    try {
+      const { apiRequest } = await import('../../lib/api');
+      const r = await chrome.storage.session.get('session');
+      const session = r.session as { accessToken: string } | undefined;
+      if (!session) return;
+      await apiRequest(`/api/vault/items/${item.id}`, {
+        method: 'DELETE',
+        token: session.accessToken,
+      });
+      onDeleted?.(item.id);
+    } catch {
+      alert('Failed to delete item');
     }
   }
 
@@ -92,7 +98,30 @@ export default function VaultItem({ item }: Props) {
       })()
     : null;
 
-  // ── LOGIN ITEM ──────────────────────────────────────────────────────────────
+  // ── PIN GATE OVERLAY ───────────────────────────────────────────────────────
+  if (showPinGate) {
+    return (
+      <div
+        style={{ ...s.card, flexDirection: 'column', alignItems: 'stretch' }}
+      >
+        <CardPinGate
+          action={showPinGate}
+          itemTitle={payload.title}
+          onSuccess={async () => {
+            if (showPinGate === 'view') {
+              setCardUnlocked(true);
+            } else {
+              await deleteItem();
+            }
+            setShowPinGate(null);
+          }}
+          onCancel={() => setShowPinGate(null)}
+        />
+      </div>
+    );
+  }
+
+  // ── LOGIN ──────────────────────────────────────────────────────────────────
   if (item.type === 'login') {
     return (
       <div style={s.card}>
@@ -121,20 +150,22 @@ export default function VaultItem({ item }: Props) {
             </button>
           )}
           {payload.url && (
-            <button
-              style={{ ...s.btn, ...s.openBtn }}
-              onClick={openUrl}
-              title="Open site"
-            >
+            <button style={{ ...s.btn, ...s.openBtn }} onClick={openUrl}>
               ↗
             </button>
           )}
+          <button
+            style={{ ...s.btn, color: '#f87171' }}
+            onClick={handleDeleteClick}
+          >
+            🗑
+          </button>
         </div>
       </div>
     );
   }
 
-  // ── NOTE ITEM ───────────────────────────────────────────────────────────────
+  // ── NOTE ───────────────────────────────────────────────────────────────────
   if (item.type === 'note') {
     return (
       <div
@@ -146,20 +177,25 @@ export default function VaultItem({ item }: Props) {
         }}
       >
         <div
-          style={{ ...s.left, justifyContent: 'space-between' }}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            cursor: 'pointer',
+          }}
           onClick={() => setExpanded((e) => !e)}
         >
-          <div style={{ ...s.left, cursor: 'pointer' }}>
+          <div style={s.left}>
             <div style={s.iconBox}>{TYPE_ICON.note}</div>
             <div style={s.info}>
               <p style={s.title}>{payload.title}</p>
               <p style={s.meta}>
-                Secure note · click to {expanded ? 'collapse' : 'view'}
+                Secure note · {expanded ? 'collapse' : 'tap to view'}
               </p>
             </div>
           </div>
           <div style={s.actions}>
-            {payload.content && (
+            {expanded && payload.content && (
               <button
                 style={s.btn}
                 onClick={(e) => {
@@ -170,6 +206,15 @@ export default function VaultItem({ item }: Props) {
                 {copied === 'note' ? '✓' : 'Copy'}
               </button>
             )}
+            <button
+              style={{ ...s.btn, color: '#f87171' }}
+              onClick={(e) => {
+                e.stopPropagation();
+                handleDeleteClick();
+              }}
+            >
+              🗑
+            </button>
             <span style={{ color: '#475569', fontSize: 12, paddingRight: 4 }}>
               {expanded ? '▲' : '▼'}
             </span>
@@ -188,66 +233,33 @@ export default function VaultItem({ item }: Props) {
     );
   }
 
-  // ── CARD ITEM ───────────────────────────────────────────────────────────────
+  // ── CARD ───────────────────────────────────────────────────────────────────
   if (item.type === 'card') {
-    // PIN entry overlay
-    if (pinMode) {
+    if (!cardUnlocked) {
       return (
         <div style={s.card}>
-          <div style={{ width: '100%' }}>
-            <p style={{ fontSize: 13, color: '#94a3b8', marginBottom: 8 }}>
-              {pinMode === 'set'
-                ? '🔒 Set a 4-digit PIN to protect cards'
-                : '🔒 Enter PIN to view card'}
-            </p>
-            <div style={{ display: 'flex', gap: 8 }}>
-              <input
-                style={{ ...s.pinInput }}
-                type="password"
-                inputMode="numeric"
-                maxLength={4}
-                placeholder="• • • •"
-                value={pinInput}
-                onChange={(e) => {
-                  setPinInput(e.target.value.replace(/\D/g, ''));
-                  setPinError('');
-                }}
-                onKeyDown={(e) => e.key === 'Enter' && handlePinSubmit()}
-                autoFocus
-              />
-              <button
-                style={{ ...s.btn, ...s.openBtn, padding: '6px 14px' }}
-                onClick={handlePinSubmit}
-              >
-                {pinMode === 'set' ? 'Set' : 'Unlock'}
-              </button>
-              <button style={s.btn} onClick={() => setPinMode(null)}>
-                ✕
-              </button>
-            </div>
-            {pinError && (
-              <p style={{ color: '#f87171', fontSize: 12, marginTop: 6 }}>
-                {pinError}
+          <div style={s.left}>
+            <div style={s.iconBox}>💳</div>
+            <div style={s.info}>
+              <p style={s.title}>{payload.title}</p>
+              <p style={s.meta}>
+                {payload.cardholder || 'Payment card'} · PIN protected
               </p>
-            )}
-            {pinMode === 'verify' && (
-              <button
-                style={{
-                  background: 'none',
-                  border: 'none',
-                  color: '#475569',
-                  fontSize: 11,
-                  cursor: 'pointer',
-                  marginTop: 6,
-                }}
-                onClick={() => {
-                  localStorage.removeItem(CARD_PIN_KEY);
-                  setPinMode('set');
-                }}
-              >
-                Forgot PIN? Reset it
-              </button>
-            )}
+            </div>
+          </div>
+          <div style={s.actions}>
+            <button
+              style={{ ...s.btn, ...s.openBtn }}
+              onClick={handleCardViewClick}
+            >
+              🔓 View
+            </button>
+            <button
+              style={{ ...s.btn, color: '#f87171' }}
+              onClick={handleDeleteClick}
+            >
+              🗑
+            </button>
           </div>
         </div>
       );
@@ -262,72 +274,70 @@ export default function VaultItem({ item }: Props) {
           gap: 0,
         }}
       >
-        <div style={{ ...s.left, justifyContent: 'space-between' }}>
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+          }}
+        >
           <div style={s.left}>
-            <div style={s.iconBox}>{TYPE_ICON.card}</div>
+            <div style={s.iconBox}>💳</div>
             <div style={s.info}>
               <p style={s.title}>{payload.title}</p>
-              <p style={s.meta}>
-                {cardUnlocked && payload.number
-                  ? `•••• •••• •••• ${payload.number.slice(-4)}`
-                  : payload.cardholder || 'Payment card'}
+              <p style={{ ...s.meta, color: '#10b981' }}>
+                Unlocked · 5 min session
               </p>
             </div>
           </div>
           <div style={s.actions}>
-            {!cardUnlocked ? (
+            {payload.number && (
               <button
-                style={{ ...s.btn, ...s.openBtn }}
-                onClick={handleCardClick}
+                style={s.btn}
+                onClick={() => copy(payload.number!, 'num')}
               >
-                🔓 View
+                {copied === 'num' ? '✓' : 'Num'}
               </button>
-            ) : (
-              <>
-                {payload.number && (
-                  <button
-                    style={s.btn}
-                    onClick={() => copy(payload.number!, 'num')}
-                  >
-                    {copied === 'num' ? '✓' : 'Num'}
-                  </button>
-                )}
-                {payload.cvv && (
-                  <button
-                    style={s.btn}
-                    onClick={() => copy(payload.cvv!, 'cvv')}
-                  >
-                    {copied === 'cvv' ? '✓' : 'CVV'}
-                  </button>
-                )}
-                <button style={s.btn} onClick={() => setCardUnlocked(false)}>
-                  🔒
-                </button>
-              </>
             )}
+            {payload.cvv && (
+              <button style={s.btn} onClick={() => copy(payload.cvv!, 'cvv')}>
+                {copied === 'cvv' ? '✓' : 'CVV'}
+              </button>
+            )}
+            <button
+              style={{ ...s.btn, color: '#94a3b8' }}
+              onClick={handleCardViewClick}
+            >
+              🔒
+            </button>
+            <button
+              style={{ ...s.btn, color: '#f87171' }}
+              onClick={handleDeleteClick}
+            >
+              🗑
+            </button>
           </div>
         </div>
-        {cardUnlocked && (
-          <div style={s.cardDetails}>
-            {payload.cardholder && (
-              <span style={s.cardField}>{payload.cardholder}</span>
-            )}
-            {payload.expiry && (
-              <span style={s.cardField}>Exp: {payload.expiry}</span>
-            )}
-            {payload.number && (
-              <span
-                style={{
-                  ...s.cardField,
-                  fontFamily: 'monospace',
-                  letterSpacing: 2,
-                }}
-              >
-                {payload.number.replace(/(.{4})/g, '$1 ').trim()}
-              </span>
-            )}
-          </div>
-        )}
+        <div style={s.cardDetails}>
+          {payload.cardholder && (
+            <span style={s.cardField}>👤 {payload.cardholder}</span>
+          )}
+          {payload.number && (
+            <span
+              style={{
+                ...s.cardField,
+                fontFamily: 'monospace',
+                letterSpacing: 2,
+              }}
+            >
+              {payload.number.replace(/(.{4})/g, '$1 ').trim()}
+            </span>
+          )}
+          {payload.expiry && (
+            <span style={s.cardField}>Exp: {payload.expiry}</span>
+          )}
+          {payload.cvv && <span style={s.cardField}>CVV: {payload.cvv}</span>}
+        </div>
       </div>
     );
   }
@@ -384,7 +394,7 @@ const s: Record<string, React.CSSProperties> = {
   },
   actions: { display: 'flex', gap: 4, flexShrink: 0 },
   btn: {
-    padding: '5px 10px',
+    padding: '5px 8px',
     borderRadius: 6,
     border: 'none',
     background: '#1e293b',
@@ -421,17 +431,5 @@ const s: Record<string, React.CSSProperties> = {
     background: '#1e293b',
     padding: '4px 8px',
     borderRadius: 6,
-  },
-  pinInput: {
-    flex: 1,
-    padding: '8px 12px',
-    borderRadius: 8,
-    border: '1px solid #334155',
-    background: '#0f172a',
-    color: '#f1f5f9',
-    fontSize: 18,
-    letterSpacing: 6,
-    textAlign: 'center',
-    outline: 'none',
   },
 };
