@@ -2059,3 +2059,48 @@ function DataTab({ session }: { session: ReturnType<typeof loadSession> }) {
     </div>
   );
 }
+
+// In your web app Settings page — add this component
+function CardPinReset() {
+  const [authKey, setAuthKey] = useState('');
+  const [status, setStatus] = useState<'idle' | 'loading' | 'done' | 'error'>(
+    'idle'
+  );
+  const [msg, setMsg] = useState('');
+
+  async function handleReset() {
+    if (!authKey) return;
+    setStatus('loading');
+    try {
+      // Derive authKey from master password first (same as login flow)
+      await api.delete('/api/auth/card-pin', { data: { authKey } });
+      setStatus('done');
+      setMsg(
+        'Card PIN reset. You will be asked to set a new PIN next time you view a card.'
+      );
+    } catch (err: any) {
+      setStatus('error');
+      setMsg(err.response?.data?.error ?? 'Failed to reset PIN');
+    }
+  }
+
+  return (
+    <div>
+      <h3>Reset Card PIN</h3>
+      <p>
+        Enter your master password to reset the Card PIN. All cards will re-lock
+        immediately.
+      </p>
+      <input
+        type="password"
+        placeholder="Master Password"
+        value={authKey}
+        onChange={(e) => setAuthKey(e.target.value)}
+      />
+      <button onClick={handleReset} disabled={status === 'loading'}>
+        {status === 'loading' ? 'Resetting...' : 'Reset Card PIN'}
+      </button>
+      {msg && <p>{msg}</p>}
+    </div>
+  );
+}

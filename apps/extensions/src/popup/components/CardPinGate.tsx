@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { MSG } from '../../lib/messages';
 import type {
   CheckCardPinExistsResponse,
@@ -8,15 +8,14 @@ import type {
 } from '../../lib/messages';
 
 interface Props {
-  action: 'view' | 'delete'; // what we're protecting
-  itemTitle: string; // shown in the header
-  onSuccess: () => void; // called when PIN correct
-  onCancel: () => void; // called when user dismisses
+  action: 'view' | 'delete';
+  itemTitle: string;
+  onSuccess: () => void;
+  onCancel: () => void;
 }
 
-type Step = 'checking' | 'no_pin_no_cards' | 'set_pin' | 'verify_pin';
+type Step = 'checking' | 'set_pin' | 'verify_pin';
 
-// 5-minute PIN session
 const PIN_DURATION = 5 * 60 * 1000;
 
 async function getPinSessionValid(): Promise<boolean> {
@@ -33,73 +32,67 @@ export default function CardPinGate({
 }: Props) {
   const [step, setStep] = useState<Step>('checking');
   const [pin, setPin] = useState('');
-  const [confirmPin, setConfirmPin] = useState(''); // for set flow only
+  const [confirmPin, setConfirmPin] = useState('');
+  const [confirmMode, setConfirmMode] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
-  // Run check on mount
-  useState(() => {
+  useEffect(() => {
     runInitialCheck();
-  });
+  }, []);
 
   async function runInitialCheck() {
-    // 1. Check if PIN session still valid
     const valid = await getPinSessionValid();
     if (valid) {
       onSuccess();
       return;
     }
 
-    // 2. Check if PIN is set in DB
     const pinRes = await chrome.runtime.sendMessage<
       object,
       CheckCardPinExistsResponse
     >({
       type: MSG.CHECK_CARD_PIN_EXISTS,
     });
-
     if (pinRes.exists) {
       setStep('verify_pin');
       return;
     }
 
-    // 3. PIN not set — check if user has any cards
     const cardRes = await chrome.runtime.sendMessage<
       object,
       CheckHasCardsResponse
     >({
       type: MSG.CHECK_HAS_CARDS,
     });
-
-    if (cardRes.hasCards) {
-      // Has cards but no PIN — data integrity issue, force set
-      setStep('set_pin');
-    } else {
-      // No cards, no PIN — first card being added or viewed
-      setStep(action === 'delete' ? 'verify_pin' : 'no_pin_no_cards');
-    }
+    // Whether cards exist or not — if no PIN, must set one
+    setStep(cardRes.hasCards || !cardRes.hasCards ? 'set_pin' : 'set_pin');
   }
 
   async function handleSetPin() {
-    if (pin.length < 4) {
-      setError('PIN must be at least 4 digits');
+    if (!confirmMode) {
+      if (pin.length < 4) {
+        setError('At least 4 digits required');
+        return;
+      }
+      setError('');
+      setConfirmMode(true);
       return;
     }
     if (pin !== confirmPin) {
-      setError('PINs do not match');
+      setError("PINs don't match");
+      setConfirmPin('');
       return;
     }
     setLoading(true);
     setError('');
-
     const res = await chrome.runtime.sendMessage<object, SetCardPinResponse>({
       type: MSG.SET_CARD_PIN,
       payload: { pin },
     });
     setLoading(false);
-
     if (res.success) onSuccess();
-    else setError(res.error ?? 'Failed to set PIN');
+    else setError(res.error ?? 'Failed');
   }
 
   async function handleVerifyPin() {
@@ -109,7 +102,6 @@ export default function CardPinGate({
     }
     setLoading(true);
     setError('');
-
     const res = await chrome.runtime.sendMessage<object, VerifyCardPinResponse>(
       {
         type: MSG.VERIFY_CARD_PIN,
@@ -117,7 +109,6 @@ export default function CardPinGate({
       }
     );
     setLoading(false);
-
     if (res.success) onSuccess();
     else {
       setError('Incorrect PIN');
@@ -125,163 +116,110 @@ export default function CardPinGate({
     }
   }
 
-  // ── Checking state ─────────────────────────────────────────────────────────
   if (step === 'checking') {
     return (
-      <div style={s.wrap}>
-        <p style={s.checkingText}>Checking PIN status...</p>
+      <div style={s.center}>
+        <p style={s.muted}>Checking...</p>
       </div>
     );
   }
 
-  // ── No PIN, no cards — shouldn't reach here for delete ────────────────────
-  if (step === 'no_pin_no_cards') {
-    return (
-      <div style={s.wrap}>
-        <p style={s.label}>No Card PIN set yet</p>
-        <p style={s.hint}>
-          You need a Card PIN to protect payment cards. Set one now.
-        </p>
-        <button style={s.primaryBtn} onClick={() => setStep('set_pin')}>
-          Set Card PIN
-        </button>
-        <button style={s.ghostBtn} onClick={onCancel}>
-          Cancel
-        </button>
-      </div>
-    );
-  }
-
-  // ── Set new PIN ────────────────────────────────────────────────────────────
   if (step === 'set_pin') {
     return (
       <div style={s.wrap}>
-        <div style={s.header}>
-          <span style={s.icon}>🔒</span>
-          <div>
-            <p style={s.title}>Set Card PIN</p>
-            <p style={s.subtitle}>{itemTitle}</p>
-          </div>
-        </div>
-        <p style={s.hint}>
-          This PIN protects all your payment cards. It's separate from your
-          master password.
+        <p style={s.title}>🔒 {confirmMode ? 'Confirm PIN' : 'Set Card PIN'}</p>
+        <p style={s.sub}>
+          {confirmMode
+            ? 'Re-enter to confirm'
+            : `One PIN protects all cards · separate from master password`}
         </p>
-        <div style={s.field}>
-          <label style={s.fieldLabel}>PIN (4–8 digits)</label>
-          <input
-            style={s.pinInput}
-            type="password"
-            inputMode="numeric"
-            maxLength={8}
-            placeholder="• • • •"
-            value={pin}
-            autoFocus
-            onChange={(e) => {
-              setPin(e.target.value.replace(/\D/g, ''));
-              setError('');
-            }}
-            onKeyDown={(e) =>
-              e.key === 'Enter' &&
-              setConfirmPin !== undefined &&
-              document.getElementById('confirm-pin')?.focus()
-            }
-          />
-        </div>
-        <div style={s.field}>
-          <label style={s.fieldLabel}>Confirm PIN</label>
-          <input
-            id="confirm-pin"
-            style={s.pinInput}
-            type="password"
-            inputMode="numeric"
-            maxLength={8}
-            placeholder="• • • •"
-            value={confirmPin}
-            onChange={(e) => {
-              setConfirmPin(e.target.value.replace(/\D/g, ''));
-              setError('');
-            }}
-            onKeyDown={(e) => e.key === 'Enter' && handleSetPin()}
-          />
-        </div>
+        <input
+          style={s.input}
+          type="password"
+          inputMode="numeric"
+          placeholder="• • • •"
+          maxLength={8}
+          value={confirmMode ? confirmPin : pin}
+          autoFocus
+          onChange={(e) => {
+            const v = e.target.value.replace(/\D/g, '');
+            confirmMode ? setConfirmPin(v) : setPin(v);
+            setError('');
+          }}
+          onKeyDown={(e) => e.key === 'Enter' && handleSetPin()}
+        />
         {error && <p style={s.error}>{error}</p>}
-        <div style={s.btnRow}>
-          <button
-            style={s.primaryBtn}
-            onClick={handleSetPin}
-            disabled={loading}
-          >
-            {loading ? 'Setting...' : 'Set PIN & Continue'}
-          </button>
-          <button style={s.ghostBtn} onClick={onCancel}>
-            Cancel
-          </button>
-        </div>
+        <button style={s.btn} onClick={handleSetPin} disabled={loading}>
+          {loading
+            ? 'Saving...'
+            : confirmMode
+              ? 'Confirm & Save'
+              : 'Continue →'}
+        </button>
+        <button
+          style={s.ghost}
+          onClick={() => {
+            if (confirmMode) {
+              setConfirmMode(false);
+              setConfirmPin('');
+              setError('');
+            } else onCancel();
+          }}
+        >
+          {confirmMode ? '← Back' : 'Cancel'}
+        </button>
       </div>
     );
   }
 
-  // ── Verify existing PIN ────────────────────────────────────────────────────
+  // verify_pin
   return (
     <div style={s.wrap}>
-      <div style={s.header}>
-        <span style={s.icon}>{action === 'delete' ? '🗑️' : '💳'}</span>
-        <div>
-          <p style={s.title}>
-            {action === 'delete' ? 'Confirm Delete' : 'Enter Card PIN'}
-          </p>
-          <p style={s.subtitle}>{itemTitle}</p>
-        </div>
-      </div>
-
+      <p style={s.title}>
+        {action === 'delete' ? '🗑️ Confirm Delete' : '🔒 Card PIN'}
+      </p>
+      <p style={s.sub}>
+        {action === 'delete'
+          ? `Permanently deletes "${itemTitle}"`
+          : 'Enter PIN to view card details'}
+      </p>
       {action === 'delete' && (
-        <div style={s.warningBox}>
-          ⚠ This will permanently delete this card from your vault.
-        </div>
+        <div style={s.warning}>⚠ This cannot be undone</div>
       )}
-
-      <div style={s.field}>
-        <label style={s.fieldLabel}>Card PIN</label>
-        <input
-          style={s.pinInput}
-          type="password"
-          inputMode="numeric"
-          maxLength={8}
-          placeholder="• • • •"
-          value={pin}
-          autoFocus
-          onChange={(e) => {
-            setPin(e.target.value.replace(/\D/g, ''));
-            setError('');
-          }}
-          onKeyDown={(e) => e.key === 'Enter' && handleVerifyPin()}
-        />
-      </div>
-      {error && <p style={s.error}>{error}</p>}
-      <div style={s.btnRow}>
-        <button
-          style={{
-            ...s.primaryBtn,
-            ...(action === 'delete' ? s.dangerBtn : {}),
-          }}
-          onClick={handleVerifyPin}
-          disabled={loading}
-        >
-          {loading ? '...' : action === 'delete' ? 'Verify & Delete' : 'Unlock'}
-        </button>
-        <button style={s.ghostBtn} onClick={onCancel}>
-          Cancel
-        </button>
-      </div>
-      <button
-        style={s.forgotBtn}
-        onClick={() => {
+      <input
+        style={s.input}
+        type="password"
+        inputMode="numeric"
+        placeholder="• • • •"
+        maxLength={8}
+        value={pin}
+        autoFocus
+        onChange={(e) => {
+          setPin(e.target.value.replace(/\D/g, ''));
           setError('');
-          setPin('');
-          // Direct to web app for PIN reset (requires master password there)
-          chrome.tabs.create({ url: 'http://localhost:5173/settings' });
         }}
+        onKeyDown={(e) => e.key === 'Enter' && handleVerifyPin()}
+      />
+      {error && <p style={s.error}>{error}</p>}
+      <button
+        style={{
+          ...s.btn,
+          ...(action === 'delete' ? { background: '#dc2626' } : {}),
+          opacity: loading ? 0.7 : 1,
+        }}
+        onClick={handleVerifyPin}
+        disabled={loading}
+      >
+        {loading ? '...' : action === 'delete' ? 'Delete' : 'Unlock'}
+      </button>
+      <button style={s.ghost} onClick={onCancel}>
+        Cancel
+      </button>
+      <button
+        style={s.forgot}
+        onClick={() =>
+          chrome.tabs.create({ url: 'http://localhost:5173/settings' })
+        }
       >
         Forgot PIN? Reset via web app →
       </button>
@@ -290,49 +228,33 @@ export default function CardPinGate({
 }
 
 const s: Record<string, React.CSSProperties> = {
-  wrap: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: 12,
-    padding: '12px 0',
-  },
-  header: { display: 'flex', alignItems: 'center', gap: 10 },
-  icon: { fontSize: 24, flexShrink: 0 },
+  wrap: { display: 'flex', flexDirection: 'column', gap: 10, padding: '4px 0' },
+  center: { display: 'flex', justifyContent: 'center', padding: 16 },
   title: { fontSize: 14, fontWeight: 700, color: '#f1f5f9', margin: 0 },
-  subtitle: { fontSize: 11, color: '#64748b', margin: '2px 0 0' },
-  hint: { fontSize: 12, color: '#64748b', lineHeight: 1.5 },
-  field: { display: 'flex', flexDirection: 'column', gap: 6 },
-  fieldLabel: {
-    fontSize: 11,
-    fontWeight: 600,
-    color: '#94a3b8',
-    textTransform: 'uppercase' as const,
-    letterSpacing: '0.5px',
-  },
-  pinInput: {
+  sub: { fontSize: 12, color: '#64748b', margin: 0, lineHeight: 1.5 },
+  input: {
     padding: '10px 14px',
     borderRadius: 8,
     border: '1px solid #334155',
     background: '#0f172a',
     color: '#f1f5f9',
-    fontSize: 22,
-    letterSpacing: 10,
-    textAlign: 'center' as const,
+    fontSize: 20,
+    letterSpacing: 8,
+    textAlign: 'center',
     outline: 'none',
+    width: '100%',
   },
-  btnRow: { display: 'flex', flexDirection: 'column', gap: 6 },
-  primaryBtn: {
+  btn: {
     padding: '10px 0',
     borderRadius: 8,
     border: 'none',
     background: '#10b981',
     color: '#fff',
     fontSize: 14,
-    fontWeight: 600,
+    fontWeight: 700,
     cursor: 'pointer',
   },
-  dangerBtn: { background: '#dc2626' },
-  ghostBtn: {
+  ghost: {
     padding: '8px 0',
     borderRadius: 8,
     border: '1px solid #334155',
@@ -341,27 +263,23 @@ const s: Record<string, React.CSSProperties> = {
     fontSize: 13,
     cursor: 'pointer',
   },
-  error: { color: '#f87171', fontSize: 12 },
-  warningBox: {
-    padding: '10px 12px',
+  error: { color: '#f87171', fontSize: 12, margin: 0 },
+  warning: {
+    padding: '8px 12px',
     borderRadius: 8,
     background: '#450a0a',
     border: '1px solid #7f1d1d',
     color: '#fca5a5',
     fontSize: 12,
+    textAlign: 'center',
   },
-  forgotBtn: {
+  forgot: {
     background: 'none',
     border: 'none',
     color: '#475569',
     fontSize: 11,
     cursor: 'pointer',
-    textAlign: 'left' as const,
-    padding: 0,
+    textAlign: 'left',
   },
-  checkingText: {
-    color: '#64748b',
-    fontSize: 13,
-    textAlign: 'center' as const,
-  },
+  muted: { color: '#64748b', fontSize: 13 },
 };

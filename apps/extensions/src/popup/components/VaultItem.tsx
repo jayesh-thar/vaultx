@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { DecryptedItem } from '../../types';
 import CardPinGate from './CardPinGate';
 
@@ -97,6 +97,19 @@ export default function VaultItem({ item, onDeleted }: Props) {
         }
       })()
     : null;
+
+  // Auto-relock card after 5 minutes
+  useEffect(() => {
+    if (!cardUnlocked) return;
+    const timer = setTimeout(
+      async () => {
+        setCardUnlocked(false);
+        await chrome.storage.session.remove('cardPinVerifiedAt');
+      },
+      5 * 60 * 1000
+    );
+    return () => clearTimeout(timer);
+  }, [cardUnlocked]);
 
   // ── PIN GATE OVERLAY ───────────────────────────────────────────────────────
   if (showPinGate) {
@@ -286,7 +299,7 @@ export default function VaultItem({ item, onDeleted }: Props) {
             <div style={s.info}>
               <p style={s.title}>{payload.title}</p>
               <p style={{ ...s.meta, color: '#10b981' }}>
-                Unlocked · 5 min session
+                Unlocked · PIN required next open
               </p>
             </div>
           </div>

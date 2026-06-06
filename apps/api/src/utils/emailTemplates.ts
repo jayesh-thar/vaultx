@@ -248,3 +248,91 @@ export function forgotPasswordEmail(email: string, code: string): string {
 </body>
 </html>`;
 }
+
+export function cardPinSetEmail(name: string, email: string): string {
+  return `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0f172a; color: #f1f5f9; margin: 0; padding: 0; }
+    .container { max-width: 560px; margin: 40px auto; background: #1e293b; border-radius: 16px; overflow: hidden; border: 1px solid #334155; }
+    .header { background: linear-gradient(135deg, #10b981, #059669); padding: 32px; text-align: center; }
+    .header h1 { margin: 0; font-size: 28px; color: #fff; }
+    .header p { margin: 8px 0 0; color: #d1fae5; font-size: 14px; }
+    .body { padding: 32px; }
+    .badge { display: inline-block; background: #10b981; color: #fff; padding: 6px 16px; border-radius: 20px; font-size: 13px; font-weight: 600; margin-bottom: 20px; }
+    .section { background: #0f172a; border-radius: 10px; padding: 20px; margin: 16px 0; border: 1px solid #334155; }
+    .section h3 { margin: 0 0 12px; color: #10b981; font-size: 14px; text-transform: uppercase; letter-spacing: 0.5px; }
+    .rule { display: flex; align-items: flex-start; gap: 10px; margin: 10px 0; font-size: 13px; color: #94a3b8; line-height: 1.5; }
+    .rule span { color: #10b981; font-size: 16px; flex-shrink: 0; }
+    .steps { counter-reset: step; }
+    .step { display: flex; gap: 12px; margin: 10px 0; font-size: 13px; color: #94a3b8; }
+    .step-num { background: #10b981; color: #fff; width: 22px; height: 22px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; flex-shrink: 0; margin-top: 1px; }
+    .footer { padding: 20px 32px; border-top: 1px solid #334155; text-align: center; font-size: 12px; color: #475569; }
+    a { color: #10b981; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>🔐 VaultX</h1>
+      <p>Zero-knowledge password manager</p>
+    </div>
+    <div class="body">
+      <p>Hi <strong>${name}</strong>,</p>
+      <div class="badge">✓ Card PIN Successfully Set</div>
+      <p style="color: #94a3b8; font-size: 14px; line-height: 1.6;">
+        Congratulations! You've secured your payment cards with a Card PIN on VaultX.
+        Your financial data now has an extra layer of protection — completely separate from your master password.
+      </p>
+
+      <div class="section">
+        <h3>🛡️ What Your Card PIN Does</h3>
+        <div class="rule"><span>✓</span> Required every time you view card details in the extension</div>
+        <div class="rule"><span>✓</span> Required to delete any payment card</div>
+        <div class="rule"><span>✓</span> Stays active for 5 minutes per session, then auto-locks</div>
+        <div class="rule"><span>✓</span> Stored securely as a bcrypt hash — we never see your PIN</div>
+        <div class="rule"><span>✓</span> One PIN protects all your cards across all devices</div>
+        <div class="rule"><span>✓</span> Completely independent from your master password</div>
+      </div>
+
+      <div class="section">
+        <h3>🔄 How to Reset Your PIN (if forgotten)</h3>
+        <p style="font-size: 12px; color: #64748b; margin: 0 0 12px;">You can reset your Card PIN from the web app or extension:</p>
+        <div class="steps">
+          <div class="step"><div class="step-num">1</div><span>Go to <a href="http://localhost:5173/settings">VaultX Web App → Settings</a></span></div>
+          <div class="step"><div class="step-num">2</div><span>Navigate to <strong>Security → Card PIN</strong></span></div>
+          <div class="step"><div class="step-num">3</div><span>Click <strong>"Reset Card PIN"</strong></span></div>
+          <div class="step"><div class="step-num">4</div><span>Enter your <strong>Master Password</strong> to verify identity</span></div>
+          <div class="step"><div class="step-num">5</div><span>Set a new Card PIN — all cards will re-lock immediately</span></div>
+        </div>
+        <p style="font-size: 12px; color: #64748b; margin: 12px 0 0;">
+          From the extension: open popup → go to Settings → Card PIN → Reset (requires master password).
+        </p>
+      </div>
+
+      <div class="section">
+        <h3>💡 Security Tips</h3>
+        <div class="rule"><span>→</span> Don't use the same PIN as your bank card</div>
+        <div class="rule"><span>→</span> Don't share your PIN with anyone — VaultX support will never ask for it</div>
+        <div class="rule"><span>→</span> If you suspect your PIN is compromised, reset it immediately</div>
+        <div class="rule"><span>→</span> Your master password can always reset the PIN if needed</div>
+      </div>
+
+      <p style="font-size: 13px; color: #64748b; line-height: 1.6; margin-top: 20px;">
+        If you did not set this PIN, please 
+        <a href="http://localhost:5173/settings/security">secure your account immediately</a> 
+        and contact support.
+      </p>
+    </div>
+    <div class="footer">
+      VaultX Security Team · <a href="http://localhost:5173">vaultx.app</a><br>
+      This is an automated security notification for ${email}
+    </div>
+  </div>
+</body>
+</html>
+`;
+}
