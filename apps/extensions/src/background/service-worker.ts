@@ -178,6 +178,10 @@ async function handleGetVaultItems(): Promise<GetVaultItemsResponse> {
       ? res
       : ((res as { items: VaultItem[] }).items ?? []);
 
+    const uniqueItems = Array.from(
+      new Map(items.map((i) => [i.id, i])).values()
+    );
+
     const masterKey = new Uint8Array(
       session.masterKey
     ) as Uint8Array<ArrayBuffer>;
