@@ -14,128 +14,154 @@ export default function Login({ onLoginSuccess }: Props) {
 
   async function handleLogin() {
     if (!email || !password) {
-      setError('Email and password are required');
+      setError('Both fields required');
       return;
     }
     setError('');
     setLoading(true);
-
     const res = await chrome.runtime.sendMessage<object, LoginResponse>({
       type: MSG.LOGIN,
       payload: { email, password },
     });
-
     setLoading(false);
-
-    if (res.success) {
-      onLoginSuccess();
-    } else {
-      setError(res.error ?? 'Login failed');
-    }
+    if (res.success) onLoginSuccess();
+    else setError(res.error ?? 'Login failed');
   }
 
   return (
-    <div style={styles.container}>
-      <div style={styles.header}>
-        <span style={styles.logo}>🔐</span>
-        <h1 style={styles.title}>VaultX</h1>
-        <p style={styles.subtitle}>Your zero-knowledge vault</p>
+    <div style={s.page}>
+      {/* Header */}
+      <div style={s.header}>
+        <div style={s.logoRing}>🔐</div>
+        <h1 style={s.title}>VaultX</h1>
+        <p style={s.sub}>Zero-knowledge password manager</p>
       </div>
 
-      <div style={styles.form}>
-        <input
-          style={styles.input}
-          type="email"
-          placeholder="Email"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && handleLogin()}
-        />
-        <input
-          style={styles.input}
-          type="password"
-          placeholder="Master Password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && handleLogin()}
-        />
+      {/* Form */}
+      <div style={s.card}>
+        <div style={s.field}>
+          <label style={s.label}>Email</label>
+          <input
+            style={s.input}
+            type="email"
+            placeholder="you@example.com"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && handleLogin()}
+          />
+        </div>
+        <div style={s.field}>
+          <label style={s.label}>Master Password</label>
+          <input
+            style={s.input}
+            type="password"
+            placeholder="••••••••••••"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && handleLogin()}
+          />
+        </div>
 
-        {error && <p style={styles.error}>{error}</p>}
+        {error && (
+          <div style={s.errorBox}>
+            <span>⚠</span> {error}
+          </div>
+        )}
 
         <button
-          style={{ ...styles.button, opacity: loading ? 0.7 : 1 }}
+          style={{ ...s.btn, opacity: loading ? 0.75 : 1 }}
           onClick={handleLogin}
           disabled={loading}
         >
-          {loading ? 'Unlocking... (~2s)' : 'Unlock Vault'}
+          {loading ? (
+            <span>
+              Deriving keys<span style={s.dots}>...</span>
+            </span>
+          ) : (
+            'Unlock Vault'
+          )}
         </button>
 
-        <p style={styles.hint}>
-          PBKDF2 key derivation takes ~2 seconds — this is intentional security.
-        </p>
+        <p style={s.hint}>PBKDF2 · 600k iterations · Takes ~2s intentionally</p>
       </div>
     </div>
   );
 }
 
-const styles: Record<string, React.CSSProperties> = {
-  container: {
+const s: Record<string, React.CSSProperties> = {
+  page: {
     display: 'flex',
     flexDirection: 'column',
-    gap: 20,
-    padding: 24,
+    alignItems: 'center',
+    padding: '32px 24px',
+    gap: 24,
+    minHeight: 520,
+    background: '#0f172a',
   },
   header: {
     textAlign: 'center',
-  },
-  logo: {
-    fontSize: 32,
-  },
-  title: {
-    margin: '4px 0 0',
-    fontSize: 22,
-    fontWeight: 700,
-    color: '#10b981',
-  },
-  subtitle: {
-    margin: '4px 0 0',
-    fontSize: 12,
-    color: '#6b7280',
-  },
-  form: {
     display: 'flex',
     flexDirection: 'column',
-    gap: 10,
+    alignItems: 'center',
+    gap: 8,
+  },
+  logoRing: { fontSize: 40 },
+  title: {
+    fontSize: 26,
+    fontWeight: 800,
+    color: '#10b981',
+    letterSpacing: '-0.5px',
+  },
+  sub: { fontSize: 12, color: '#64748b' },
+  card: {
+    width: '100%',
+    background: '#1e293b',
+    borderRadius: 14,
+    padding: 20,
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 14,
+    border: '1px solid #334155',
+  },
+  field: { display: 'flex', flexDirection: 'column', gap: 6 },
+  label: {
+    fontSize: 12,
+    fontWeight: 600,
+    color: '#94a3b8',
+    textTransform: 'uppercase',
+    letterSpacing: '0.5px',
   },
   input: {
-    padding: '10px 12px',
+    padding: '10px 14px',
     borderRadius: 8,
-    border: '1px solid #374151',
-    background: '#1f2937',
-    color: '#f9fafb',
+    border: '1px solid #334155',
+    background: '#0f172a',
+    color: '#f1f5f9',
     fontSize: 14,
     outline: 'none',
   },
-  button: {
-    padding: '10px 0',
-    borderRadius: 8,
+  btn: {
+    padding: '12px 0',
+    borderRadius: 10,
     border: 'none',
-    background: '#10b981',
+    background: 'linear-gradient(135deg, #10b981, #059669)',
     color: '#fff',
-    fontSize: 14,
-    fontWeight: 600,
+    fontSize: 15,
+    fontWeight: 700,
     cursor: 'pointer',
-    marginTop: 4,
+    transition: 'opacity 0.2s',
   },
-  error: {
-    margin: 0,
-    fontSize: 12,
-    color: '#ef4444',
+  errorBox: {
+    padding: '10px 14px',
+    borderRadius: 8,
+    background: '#450a0a',
+    border: '1px solid #7f1d1d',
+    color: '#fca5a5',
+    fontSize: 13,
+    display: 'flex',
+    gap: 8,
+    alignItems: 'center',
   },
-  hint: {
-    margin: 0,
-    fontSize: 11,
-    color: '#4b5563',
-    textAlign: 'center',
-  },
+  hint: { textAlign: 'center', fontSize: 11, color: '#475569' },
+  dots: { display: 'inline-block' },
 };

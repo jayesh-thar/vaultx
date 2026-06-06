@@ -5,54 +5,65 @@ interface Props {
   item: DecryptedItem;
 }
 
+const TYPE_ICON: Record<string, string> = {
+  login: '🔑',
+  note: '📝',
+  card: '💳',
+};
+
 export default function VaultItem({ item }: Props) {
-  const [copiedField, setCopiedField] = useState<string | null>(null);
+  const [copied, setCopied] = useState<string | null>(null);
 
   function copy(value: string, field: string) {
     navigator.clipboard.writeText(value);
-    setCopiedField(field);
-    setTimeout(() => setCopiedField(null), 1500);
+    setCopied(field);
+    setTimeout(() => setCopied(null), 1500);
+  }
+
+  function openUrl() {
+    let url = item.payload.url ?? '';
+    if (!url.startsWith('http')) url = 'https://' + url;
+    chrome.tabs.create({ url });
   }
 
   const { payload } = item;
+  const domain = payload.url
+    ? (() => {
+        try {
+          return new URL(
+            payload.url.startsWith('http')
+              ? payload.url
+              : 'https://' + payload.url
+          ).hostname;
+        } catch {
+          return payload.url;
+        }
+      })()
+    : null;
 
   return (
-    <div style={styles.card}>
-      <div style={styles.cardHeader}>
-        <span style={styles.icon}>
-          {item.type === 'login' ? '🔑' : item.type === 'note' ? '📝' : '💳'}
-        </span>
-        <div style={styles.titleBlock}>
-          <p style={styles.title}>{payload.title}</p>
-          {payload.username && (
-            <p style={styles.username}>{payload.username}</p>
-          )}
+    <div style={s.card}>
+      <div style={s.left}>
+        <div style={s.iconBox}>{TYPE_ICON[item.type] ?? '🔒'}</div>
+        <div style={s.info}>
+          <p style={s.title}>{payload.title}</p>
+          <p style={s.meta}>{payload.username || domain || item.type}</p>
         </div>
       </div>
-
-      <div style={styles.actions}>
+      <div style={s.actions}>
         {payload.username && (
-          <button
-            style={styles.copyBtn}
-            onClick={() => copy(payload.username!, 'username')}
-          >
-            {copiedField === 'username' ? '✓ Copied' : 'Copy User'}
+          <button style={s.btn} onClick={() => copy(payload.username!, 'user')}>
+            {copied === 'user' ? '✓' : 'User'}
           </button>
         )}
         {payload.password && (
-          <button
-            style={styles.copyBtn}
-            onClick={() => copy(payload.password!, 'password')}
-          >
-            {copiedField === 'password' ? '✓ Copied' : 'Copy Pass'}
+          <button style={s.btn} onClick={() => copy(payload.password!, 'pass')}>
+            {copied === 'pass' ? '✓' : 'Pass'}
           </button>
         )}
         {payload.url && (
-          <button
-            style={{ ...styles.copyBtn, background: '#1d4ed8' }}
-            onClick={() => chrome.tabs.create({ url: payload.url! })}
-          >
-            Open
+          <button style={{ ...s.btn, ...s.openBtn }} onClick={openUrl}>
+            ↗
           </button>
         )}
       </div>
@@ -60,58 +71,64 @@ export default function VaultItem({ item }: Props) {
   );
 }
 
-const styles: Record<string, React.CSSProperties> = {
+const s: Record<string, React.CSSProperties> = {
   card: {
-    background: '#1f2937',
-    borderRadius: 8,
-    padding: '10px 12px',
     display: 'flex',
-    flexDirection: 'column',
-    gap: 8,
-    border: '1px solid #374151',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: '10px 12px',
+    borderRadius: 10,
+    background: '#0f172a',
+    border: '1px solid #1e293b',
+    gap: 10,
   },
-  cardHeader: {
+  left: {
     display: 'flex',
     alignItems: 'center',
     gap: 10,
-  },
-  icon: {
-    fontSize: 20,
-  },
-  titleBlock: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: 2,
     overflow: 'hidden',
+    flex: 1,
   },
+  iconBox: {
+    fontSize: 20,
+    flexShrink: 0,
+    width: 36,
+    height: 36,
+    borderRadius: 8,
+    background: '#1e293b',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  info: { overflow: 'hidden' },
   title: {
-    margin: 0,
     fontSize: 14,
     fontWeight: 600,
-    color: '#f9fafb',
+    color: '#f1f5f9',
     whiteSpace: 'nowrap',
     overflow: 'hidden',
     textOverflow: 'ellipsis',
-  },
-  username: {
     margin: 0,
-    fontSize: 12,
-    color: '#9ca3af',
+  },
+  meta: {
+    fontSize: 11,
+    color: '#64748b',
     whiteSpace: 'nowrap',
     overflow: 'hidden',
     textOverflow: 'ellipsis',
+    margin: '2px 0 0',
   },
-  actions: {
-    display: 'flex',
-    gap: 6,
-  },
-  copyBtn: {
-    padding: '4px 10px',
+  actions: { display: 'flex', gap: 4, flexShrink: 0 },
+  btn: {
+    padding: '5px 10px',
     borderRadius: 6,
     border: 'none',
-    background: '#374151',
-    color: '#f9fafb',
+    background: '#1e293b',
+    color: '#94a3b8',
     fontSize: 12,
     cursor: 'pointer',
+    fontWeight: 500,
+    minWidth: 40,
   },
+  openBtn: { background: '#1e3a5f', color: '#38bdf8' },
 };
