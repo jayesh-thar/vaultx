@@ -23,6 +23,7 @@ export default function Vault({ onLogout }: Props) {
   const isFetchingRef = useRef(false);
   const profileRef = useRef<HTMLDivElement>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [autoSave, setAutoSave] = useState(false);
 
   useEffect(() => {
     loadItems();
@@ -45,6 +46,16 @@ export default function Vault({ onLogout }: Props) {
     document.addEventListener('mousedown', handleClick);
     return () => document.removeEventListener('mousedown', handleClick);
   }, []);
+
+  chrome.storage.local.get('vaultx_autosave').then((r) => {
+    setAutoSave(r.vaultx_autosave === true);
+  });
+
+  async function toggleAutoSave() {
+    const newVal = !autoSave;
+    setAutoSave(newVal);
+    await chrome.storage.local.set({ vaultx_autosave: newVal });
+  }
 
   async function loadItems() {
     if (isFetchingRef.current) return;
@@ -185,7 +196,60 @@ export default function Vault({ onLogout }: Props) {
                     </span>
                   </div>
                 </div>
+
                 <div style={s.divider} />
+
+                {/* Auto-save toggle */}
+                <div
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    padding: '4px 0',
+                  }}
+                >
+                  <div>
+                    <p style={{ fontSize: 12, color: '#94a3b8', margin: 0 }}>
+                      Auto-save credentials
+                    </p>
+                    <p
+                      style={{
+                        fontSize: 10,
+                        color: '#475569',
+                        margin: '2px 0 0',
+                      }}
+                    >
+                      Saves on form submit · this browser only
+                    </p>
+                  </div>
+                  <div
+                    onClick={toggleAutoSave}
+                    style={{
+                      width: 36,
+                      height: 20,
+                      borderRadius: 10,
+                      cursor: 'pointer',
+                      background: autoSave ? '#10b981' : '#334155',
+                      position: 'relative',
+                      transition: 'background 0.2s',
+                      flexShrink: 0,
+                    }}
+                  >
+                    <div
+                      style={{
+                        position: 'absolute',
+                        top: 2,
+                        width: 16,
+                        height: 16,
+                        borderRadius: '50%',
+                        background: '#fff',
+                        transition: 'left 0.2s',
+                        left: autoSave ? 18 : 2,
+                      }}
+                    />
+                  </div>
+                </div>
+
                 <button
                   style={s.profileAction}
                   onClick={() => {

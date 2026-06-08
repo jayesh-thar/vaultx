@@ -16,6 +16,9 @@ export const MSG = {
   SET_CARD_PIN: 'SET_CARD_PIN',
   VERIFY_CARD_PIN: 'VERIFY_CARD_PIN',
   CHECK_HAS_CARDS: 'CHECK_HAS_CARDS',
+  GOOGLE_AUTH: 'GOOGLE_AUTH',
+  GOOGLE_UNLOCK: 'GOOGLE_UNLOCK',
+  SAVE_FORM_FIELDS: 'SAVE_FORM_FIELDS',
 } as const;
 
 // --- Request shapes (what the sender sends) ---
@@ -72,6 +75,27 @@ export interface CheckHasCardsResponse {
   hasCards: boolean;
 }
 
+export interface GoogleAuthRequest {
+  type: typeof MSG.GOOGLE_AUTH;
+}
+export interface GoogleAuthResponse {
+  success: boolean;
+  isNewUser?: boolean;
+  email?: string;
+  error?: string;
+  // For existing users who need master password
+  needsMasterPassword?: boolean;
+}
+
+export interface GoogleUnlockRequest {
+  type: typeof MSG.GOOGLE_UNLOCK;
+  payload: { password: string };
+}
+export interface GoogleUnlockResponse {
+  success: boolean;
+  error?: string;
+}
+
 export type ExtensionMessage =
   | CheckSessionRequest
   | LoginRequest
@@ -82,7 +106,9 @@ export type ExtensionMessage =
   | CheckCardPinExistsRequest
   | SetCardPinRequest
   | VerifyCardPinRequest
-  | CheckHasCardsRequest;
+  | CheckHasCardsRequest
+  | GoogleAuthRequest
+  | GoogleUnlockRequest;
 
 // --- Response shapes (what the service worker sends back) ---
 export interface CheckSessionResponse {

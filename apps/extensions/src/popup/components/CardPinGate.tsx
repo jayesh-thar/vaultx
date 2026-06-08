@@ -228,22 +228,22 @@ export default function CardPinGate({
 }
 
 const s: Record<string, React.CSSProperties> = {
-  wrap: { display: 'flex', flexDirection: 'column', gap: 10, padding: '4px 0' },
-  center: { display: 'flex', justifyContent: 'center', padding: 16 },
-  title: { fontSize: 14, fontWeight: 700, color: '#f1f5f9', margin: 0 },
-  sub: { fontSize: 12, color: '#64748b', margin: 0, lineHeight: 1.5 },
+  wrap: { display: 'flex', flexDirection: 'column', gap: 8, padding: '2px 0' },
   input: {
-    padding: '10px 14px',
+    padding: '8px 12px',
     borderRadius: 8,
     border: '1px solid #334155',
     background: '#0f172a',
     color: '#f1f5f9',
-    fontSize: 20,
-    letterSpacing: 8,
+    fontSize: 18,
+    letterSpacing: 6,
     textAlign: 'center',
     outline: 'none',
     width: '100%',
   },
+  center: { display: 'flex', justifyContent: 'center', padding: 16 },
+  title: { fontSize: 13, fontWeight: 600, color: '#f1f5f9', margin: 0 },
+  sub: { fontSize: 12, color: '#64748b', margin: 0, lineHeight: 1.5 },
   btn: {
     padding: '10px 0',
     borderRadius: 8,

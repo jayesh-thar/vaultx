@@ -27,7 +27,7 @@
       "run_at": "document_idle"
     }
   ],
-  "permissions": ["storage", "activeTab", "scripting", "tabs"],
+  "permissions": ["storage", "activeTab", "scripting", "tabs", "identity"],
   "host_permissions": ["http://localhost:5000/*", "<all_urls>"],
   "browser_specific_settings": {
     "gecko": {

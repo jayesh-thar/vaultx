@@ -1,294 +1,304 @@
-import 'webextension-polyfill';
+console.log('[VaultX] Content script loaded on', window.location.hostname);
 
 // ── Types ──────────────────────────────────────────────────────────────────
-interface LoginForm {
-  emailInput: HTMLInputElement | null;
-  passwordInput: HTMLInputElement;
-  submitButton: HTMLElement | null;
+interface CapturedField {
+  name: string;
+  type: string;
+  value: string;
+  label: string;
 }
 
-// ── Find login forms on the page ───────────────────────────────────────────
-function findLoginForms(): LoginForm[] {
-  const passwordInputs = Array.from(
-    document.querySelectorAll<HTMLInputElement>('input[type="password"]')
-  ).filter((el) => isVisible(el));
-
-  return passwordInputs.map((passwordInput) => {
-    // Look for email/username input near the password field
-    const form = passwordInput.closest('form');
-    const container =
-      form ?? passwordInput.parentElement?.parentElement ?? document.body;
-
-    const emailInput =
-      container.querySelector<HTMLInputElement>('input[type="email"]') ??
-      container.querySelector<HTMLInputElement>(
-        'input[type="text"][name*="user"]'
-      ) ??
-      container.querySelector<HTMLInputElement>(
-        'input[type="text"][name*="email"]'
-      ) ??
-      container.querySelector<HTMLInputElement>(
-        'input[type="text"][autocomplete*="email"]'
-      ) ??
-      container.querySelector<HTMLInputElement>(
-        'input[type="text"][autocomplete*="username"]'
-      ) ??
-      null;
-
-    const submitButton =
-      form?.querySelector<HTMLElement>('button[type="submit"]') ??
-      form?.querySelector<HTMLElement>('input[type="submit"]') ??
-      null;
-
-    return { emailInput, passwordInput, submitButton };
-  });
-}
-
-function isVisible(el: HTMLElement): boolean {
-  const rect = el.getBoundingClientRect();
-  const style = window.getComputedStyle(el);
-  return (
-    rect.width > 0 &&
-    rect.height > 0 &&
-    style.display !== 'none' &&
-    style.visibility !== 'hidden' &&
-    style.opacity !== '0'
-  );
-}
-
-// ── Fill a single input (works with React/Vue/Angular) ─────────────────────
+// ── Fill input (works with React/Vue/Angular) ─────────────────────────────
 function fillInput(input: HTMLInputElement, value: string): void {
-  // Focus first
   input.focus();
-
-  // React uses a custom property descriptor — we need to trick it
-  const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
+  const nativeSetter = Object.getOwnPropertyDescriptor(
     window.HTMLInputElement.prototype,
     'value'
   )?.set;
-
-  if (nativeInputValueSetter) {
-    nativeInputValueSetter.call(input, value);
+  if (nativeSetter) {
+    nativeSetter.call(input, value);
   } else {
     input.value = value;
   }
-
-  // Dispatch events so React/Vue/Angular pick up the change
   input.dispatchEvent(new Event('input', { bubbles: true }));
   input.dispatchEvent(new Event('change', { bubbles: true }));
   input.blur();
 }
 
-// ── Domain extraction ──────────────────────────────────────────────────────
-function getCurrentDomain(): string {
-  return window.location.hostname;
+// ── Get label for an input ────────────────────────────────────────────────
+function getInputLabel(input: HTMLInputElement): string {
+  // Try aria-label
+  if (input.ariaLabel) return input.ariaLabel;
+  // Try associated <label>
+  if (input.id) {
+    const label = document.querySelector<HTMLLabelElement>(
+      `label[for="${input.id}"]`
+    );
+    if (label) return label.textContent?.trim() ?? '';
+  }
+  // Try placeholder
+  if (input.placeholder) return input.placeholder;
+  // Try name attribute
+  if (input.name) return input.name;
+  // Try type
+  return input.type || 'field';
 }
 
-// ── Autofill button injection ──────────────────────────────────────────────
-const BUTTON_ID = 'vaultx-autofill-btn';
-const DROPDOWN_ID = 'vaultx-autofill-dropdown';
+// ── Smart field name mapping ──────────────────────────────────────────────
+function mapFieldToVaultKey(input: HTMLInputElement): string {
+  const name = (input.name ?? '').toLowerCase();
+  const type = input.type.toLowerCase();
+  const id = (input.id ?? '').toLowerCase();
+  const placeholder = (input.placeholder ?? '').toLowerCase();
+  const combined = `${name} ${id} ${placeholder}`;
 
-function removeExistingUI() {
-  document.getElementById(BUTTON_ID)?.remove();
-  document.getElementById(DROPDOWN_ID)?.remove();
+  if (type === 'email' || combined.includes('email')) return 'email';
+  if (type === 'password') return 'password';
+  if (combined.includes('username') || combined.includes('user_name'))
+    return 'username';
+  if (combined.includes('first') && combined.includes('name'))
+    return 'firstName';
+  if (combined.includes('last') && combined.includes('name')) return 'lastName';
+  if (
+    combined.includes('name') &&
+    !combined.includes('first') &&
+    !combined.includes('last')
+  )
+    return 'username';
+  if (
+    combined.includes('phone') ||
+    combined.includes('mobile') ||
+    combined.includes('tel')
+  )
+    return 'phone';
+  if (combined.includes('birth') || combined.includes('dob'))
+    return 'birthdate';
+  if (combined.includes('zip') || combined.includes('postal')) return 'zipCode';
+  if (combined.includes('address')) return 'address';
+  if (combined.includes('city')) return 'city';
+  if (combined.includes('country')) return 'country';
+  if (combined.includes('card') && combined.includes('number'))
+    return 'cardNumber';
+  if (combined.includes('cvv') || combined.includes('cvc')) return 'cvv';
+  if (combined.includes('expir')) return 'expiry';
+
+  // Fall back to the actual name or id
+  return name || id || type || 'field';
 }
 
-function injectAutofillButton(form: LoginForm) {
-  removeExistingUI();
-
-  const { passwordInput, emailInput } = form;
-
-  // Create the VaultX button
-  const button = document.createElement('button');
-  button.id = BUTTON_ID;
-  button.type = 'button';
-  button.title = 'Autofill with VaultX';
-  button.innerHTML = '🔐';
-  button.style.cssText = `
-    position: absolute;
-    right: 10px;
-    top: 50%;
-    transform: translateY(-50%);
-    width: 28px;
-    height: 28px;
-    border: none;
-    background: #10b981;
-    border-radius: 6px;
-    cursor: pointer;
-    font-size: 14px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 2147483647;
-    box-shadow: 0 2px 8px rgba(16,185,129,0.4);
-    line-height: 1;
-    padding: 0;
-  `;
-
-  // Position relative to password input
-  const wrapper = document.createElement('div');
-  wrapper.style.cssText = `
-    position: absolute;
-    z-index: 2147483647;
-  `;
-
-  const rect = passwordInput.getBoundingClientRect();
-  const scrollTop = window.scrollY || document.documentElement.scrollTop;
-  const scrollLeft = window.scrollX || document.documentElement.scrollLeft;
-
-  wrapper.style.top = `${rect.top + scrollTop}px`;
-  wrapper.style.left = `${rect.left + scrollLeft}px`;
-  wrapper.style.width = `${rect.width}px`;
-  wrapper.style.height = `${rect.height}px`;
-
-  wrapper.appendChild(button);
-  document.body.appendChild(wrapper);
-
-  button.addEventListener('click', async (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    await showCredentialDropdown(form, button);
-  });
+// ── Find login forms ──────────────────────────────────────────────────────
+function findPasswordInput(): HTMLInputElement | null {
+  return document.querySelector<HTMLInputElement>(
+    'input[type="password"]:not([style*="display: none"])'
+  );
 }
 
-// ── Credential dropdown ────────────────────────────────────────────────────
-async function showCredentialDropdown(form: LoginForm, anchor: HTMLElement) {
-  // Remove existing dropdown
-  document.getElementById(DROPDOWN_ID)?.remove();
+function findAllFormInputs(): CapturedField[] {
+  const inputs = Array.from(
+    document.querySelectorAll<HTMLInputElement>('input, select, textarea')
+  );
+  const fields: CapturedField[] = [];
+  const seen = new Set<string>();
 
-  // Ask service worker for matching items
-  const domain = getCurrentDomain();
-  const response = (await chrome.runtime.sendMessage({
-    type: 'GET_ITEMS_FOR_DOMAIN',
-    payload: { domain },
-  })) as {
-    items: Array<{
-      id: string;
-      payload: {
-        title: string;
-        username?: string;
-        email?: string;
-        password?: string;
-      };
-    }>;
-  };
+  for (const input of inputs) {
+    if (
+      input.type === 'hidden' ||
+      input.type === 'submit' ||
+      input.type === 'button' ||
+      input.type === 'checkbox' ||
+      input.type === 'radio'
+    )
+      continue;
+    if (!input.value?.trim()) continue;
 
-  const items = response?.items ?? [];
+    const style = window.getComputedStyle(input);
+    if (style.display === 'none' || style.visibility === 'hidden') continue;
 
-  // Create dropdown
-  const dropdown = document.createElement('div');
-  dropdown.id = DROPDOWN_ID;
+    const key = mapFieldToVaultKey(input as HTMLInputElement);
+    if (seen.has(key)) continue;
+    seen.add(key);
 
-  const anchorRect = anchor.getBoundingClientRect();
-  const scrollTop = window.scrollY || document.documentElement.scrollTop;
-  const scrollLeft = window.scrollX || document.documentElement.scrollLeft;
-
-  dropdown.style.cssText = `
-    position: absolute;
-    top: ${anchorRect.bottom + scrollTop + 4}px;
-    left: ${anchorRect.left + scrollLeft - 180}px;
-    width: 220px;
-    background: #1e293b;
-    border: 1px solid #334155;
-    border-radius: 10px;
-    box-shadow: 0 8px 32px rgba(0,0,0,0.5);
-    z-index: 2147483647;
-    overflow: hidden;
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  `;
-
-  if (items.length === 0) {
-    dropdown.innerHTML = `
-      <div style="padding:12px 14px;text-align:center;">
-        <div style="font-size:20px;margin-bottom:6px;">🔐</div>
-        <p style="color:#64748b;font-size:12px;margin:0;">No saved credentials for this site</p>
-        <p style="color:#475569;font-size:11px;margin:6px 0 0;">Add them in the VaultX extension</p>
-      </div>
-    `;
-  } else {
-    const header = document.createElement('div');
-    header.style.cssText =
-      'padding:8px 12px;border-bottom:1px solid #334155;display:flex;align-items:center;gap:6px;';
-    header.innerHTML =
-      '<span style="font-size:14px;">🔐</span><span style="font-size:11px;font-weight:600;color:#94a3b8;">VaultX — Select credential</span>';
-    dropdown.appendChild(header);
-
-    items.forEach((item) => {
-      const row = document.createElement('button');
-      row.type = 'button';
-      row.style.cssText = `
-        width: 100%;
-        padding: 10px 12px;
-        border: none;
-        background: transparent;
-        text-align: left;
-        cursor: pointer;
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        border-bottom: 1px solid #1e293b;
-      `;
-
-      const usernameDisplay =
-        item.payload.username || item.payload.email || '—';
-      row.innerHTML = `
-        <div style="width:28px;height:28px;border-radius:6px;background:#0f172a;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0;">🔑</div>
-        <div style="overflow:hidden;">
-          <p style="font-size:12px;font-weight:600;color:#f1f5f9;margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(item.payload.title)}</p>
-          <p style="font-size:11px;color:#64748b;margin:2px 0 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(usernameDisplay)}</p>
-        </div>
-      `;
-
-      row.addEventListener('mouseenter', () => {
-        row.style.background = '#0f172a';
-      });
-      row.addEventListener('mouseleave', () => {
-        row.style.background = 'transparent';
-      });
-
-      row.addEventListener('click', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-
-        // Fill credentials
-        if (form.emailInput && (item.payload.username || item.payload.email)) {
-          fillInput(
-            form.emailInput,
-            item.payload.username ?? item.payload.email ?? ''
-          );
-        }
-        if (item.payload.password) {
-          fillInput(form.passwordInput, item.payload.password);
-        }
-
-        dropdown.remove();
-
-        // Show success feedback on button
-        const vaultBtn = document.getElementById(BUTTON_ID);
-        if (vaultBtn) {
-          vaultBtn.innerHTML = '✓';
-          vaultBtn.style.background = '#059669';
-          setTimeout(() => {
-            vaultBtn.innerHTML = '🔐';
-            vaultBtn.style.background = '#10b981';
-          }, 2000);
-        }
-      });
-
-      dropdown.appendChild(row);
+    fields.push({
+      name: key,
+      type: input.type || 'text',
+      value: input.value.trim(),
+      label: getInputLabel(input as HTMLInputElement),
     });
   }
 
-  document.body.appendChild(dropdown);
+  return fields;
+}
 
-  // Close dropdown on outside click
-  function handleOutsideClick(e: MouseEvent) {
-    if (!dropdown.contains(e.target as Node) && e.target !== anchor) {
-      dropdown.remove();
-      document.removeEventListener('click', handleOutsideClick);
+// ── Autofill handler (called from popup) ─────────────────────────────────
+function autofillCredentials(credentials: {
+  username?: string;
+  email?: string;
+  password?: string;
+  [key: string]: string | undefined;
+}) {
+  const inputs = Array.from(
+    document.querySelectorAll<HTMLInputElement>('input')
+  );
+
+  for (const input of inputs) {
+    const key = mapFieldToVaultKey(input);
+    const value = credentials[key];
+    if (value) {
+      fillInput(input, value);
     }
   }
-  setTimeout(() => document.addEventListener('click', handleOutsideClick), 100);
+}
+
+// ── Save form submission ──────────────────────────────────────────────────
+let formSubmitHandler: ((e: Event) => void) | null = null;
+
+function setupFormSubmitCapture() {
+  if (formSubmitHandler) return; // already set up
+
+  formSubmitHandler = async (e: Event) => {
+    const passwordInput = findPasswordInput();
+    if (!passwordInput || !passwordInput.value.trim()) return;
+
+    const fields = findAllFormInputs();
+    if (fields.length < 2) return; // not a real form
+
+    const domain = window.location.hostname;
+    const title = document.title || domain;
+
+    // Ask service worker to check auto-save preference + save
+    const response = (await chrome.runtime.sendMessage({
+      type: 'SAVE_FORM_FIELDS',
+      payload: { fields, domain, title, url: window.location.href },
+    })) as { saved: boolean; autoSave: boolean } | null;
+
+    if (response?.saved) {
+      showSaveToast('✓ Saved to VaultX');
+    } else if (response && !response.autoSave) {
+      showSaveBanner(fields, domain, title);
+    }
+  };
+
+  // Attach to all forms
+  document.querySelectorAll('form').forEach((form) => {
+    form.addEventListener('submit', formSubmitHandler!);
+  });
+
+  // Also watch for submit buttons clicked without form submit event
+  document
+    .querySelectorAll<HTMLButtonElement>(
+      'button[type="submit"], input[type="submit"]'
+    )
+    .forEach((btn) => {
+      btn.addEventListener('click', () => {
+        setTimeout(() => formSubmitHandler!(new Event('submit')), 100);
+      });
+    });
+}
+
+// ── Save toast (shown when auto-save is ON) ───────────────────────────────
+function showSaveToast(message: string) {
+  const existing = document.getElementById('vaultx-toast');
+  existing?.remove();
+
+  const toast = document.createElement('div');
+  toast.id = 'vaultx-toast';
+  toast.style.cssText = `
+    position: fixed;
+    bottom: 20px;
+    right: 20px;
+    background: #10b981;
+    color: #fff;
+    padding: 10px 16px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-family: -apple-system, sans-serif;
+    font-weight: 600;
+    z-index: 2147483647;
+    box-shadow: 0 4px 16px rgba(16,185,129,0.4);
+    animation: vx-slide-in 0.3s ease;
+  `;
+  toast.textContent = message;
+
+  const style = document.createElement('style');
+  style.textContent = `@keyframes vx-slide-in { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }`;
+  document.head.appendChild(style);
+  document.body.appendChild(toast);
+  setTimeout(() => toast.remove(), 3000);
+}
+
+// ── Save banner (shown when auto-save is OFF) ─────────────────────────────
+function showSaveBanner(
+  fields: CapturedField[],
+  domain: string,
+  title: string
+) {
+  const existing = document.getElementById('vaultx-save-banner');
+  existing?.remove();
+
+  const banner = document.createElement('div');
+  banner.id = 'vaultx-save-banner';
+  banner.style.cssText = `
+    position: fixed;
+    bottom: 20px;
+    right: 20px;
+    width: 280px;
+    background: #1e293b;
+    border: 1px solid #334155;
+    border-radius: 12px;
+    padding: 14px;
+    font-family: -apple-system, sans-serif;
+    z-index: 2147483647;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+  `;
+
+  const emailField = fields.find(
+    (f) => f.name === 'email' || f.name === 'username'
+  );
+  const subtitle = emailField ? emailField.value : domain;
+
+  banner.innerHTML = `
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+      <span style="font-size:18px;">🔐</span>
+      <div style="flex:1;overflow:hidden;">
+        <p style="font-size:13px;font-weight:600;color:#f1f5f9;margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(title)}</p>
+        <p style="font-size:11px;color:#64748b;margin:2px 0 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(subtitle)}</p>
+      </div>
+      <button id="vaultx-banner-close" style="background:none;border:none;color:#475569;cursor:pointer;font-size:16px;padding:0;line-height:1;">✕</button>
+    </div>
+    <p style="font-size:11px;color:#64748b;margin:0 0 10px;">${fields.length} field${fields.length !== 1 ? 's' : ''} to save</p>
+    <div style="display:flex;gap:8px;">
+      <button id="vaultx-banner-save" style="flex:1;padding:8px 0;border-radius:7px;border:none;background:#10b981;color:#fff;font-size:12px;font-weight:600;cursor:pointer;">Save to VaultX</button>
+      <button id="vaultx-banner-ignore" style="flex:1;padding:8px 0;border-radius:7px;border:1px solid #334155;background:transparent;color:#64748b;font-size:12px;cursor:pointer;">Not now</button>
+    </div>
+  `;
+
+  document.body.appendChild(banner);
+
+  document
+    .getElementById('vaultx-banner-close')
+    ?.addEventListener('click', () => banner.remove());
+  document
+    .getElementById('vaultx-banner-ignore')
+    ?.addEventListener('click', () => banner.remove());
+  document
+    .getElementById('vaultx-banner-save')
+    ?.addEventListener('click', async () => {
+      banner.remove();
+      await chrome.runtime.sendMessage({
+        type: 'SAVE_FORM_FIELDS',
+        payload: {
+          fields,
+          domain,
+          title,
+          url: window.location.href,
+          forcesSave: true,
+        },
+      });
+      showSaveToast('✓ Saved to VaultX');
+    });
+
+  // Auto-dismiss after 15 seconds
+  setTimeout(() => banner.remove(), 15000);
 }
 
 function escapeHtml(str: string): string {
@@ -299,40 +309,24 @@ function escapeHtml(str: string): string {
     .replace(/"/g, '&quot;');
 }
 
-// ── Main: scan page and inject UI ─────────────────────────────────────────
-function scanAndInject() {
-  const forms = findLoginForms();
-  if (forms.length > 0) {
-    console.log(
-      `[VaultX] Found ${forms.length} login form(s) on ${getCurrentDomain()}`
-    );
-    injectAutofillButton(forms[0]); // inject on first detected form
+// ── Message listener (from popup or service worker) ───────────────────────
+chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg.type === 'AUTOFILL_CREDENTIALS') {
+    autofillCredentials(msg.payload);
+    sendResponse({ success: true });
   }
-}
 
-// Run on page load
-scanAndInject();
+  if (msg.type === 'GET_FORM_FIELDS') {
+    sendResponse({ fields: findAllFormInputs() });
+  }
 
-// MutationObserver for SPAs (React/Vue apps that render forms dynamically)
-// Debounce to avoid running on every tiny DOM change
-let scanTimer: ReturnType<typeof setTimeout> | null = null;
-const observer = new MutationObserver(() => {
-  if (scanTimer) clearTimeout(scanTimer);
-  scanTimer = setTimeout(() => {
-    scanAndInject();
-    scanTimer = null;
-  }, 500);
+  if (msg.type === 'SETUP_FORM_CAPTURE') {
+    setupFormSubmitCapture();
+    sendResponse({ success: true });
+  }
+
+  return true;
 });
 
-observer.observe(document.body, {
-  childList: true,
-  subtree: true,
-});
-
-// Clean up button when navigating away (SPA navigation)
-window.addEventListener('beforeunload', () => {
-  removeExistingUI();
-  observer.disconnect();
-});
-
-console.log('[VaultX] Content script loaded on', getCurrentDomain());
+// Always set up form capture
+setupFormSubmitCapture();

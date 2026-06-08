@@ -83,6 +83,13 @@ async function handleMessage(msg: ExtensionMessage): Promise<unknown> {
       return handleVerifyCardPin(msg.payload);
     case MSG.CHECK_HAS_CARDS:
       return handleCheckHasCards();
+    case MSG.GOOGLE_AUTH:
+      return handleGoogleAuth();
+    case MSG.GOOGLE_UNLOCK:
+      return;
+      handleGoogleUnlock(msg.payload);
+    case 'SAVE_FORM_FIELDS':
+      return handleSaveFormFields(msg.payload);
     default:
       return { success: false, error: 'Unknown message type' };
   }
@@ -337,4 +344,238 @@ async function handleCheckHasCards(): Promise<CheckHasCardsResponse> {
   const vaultRes = await handleGetVaultItems();
   if (!vaultRes.success || !vaultRes.items) return { hasCards: false };
   return { hasCards: vaultRes.items.some((i) => i.type === 'card') };
+}
+
+const GOOGLE_CLIENT_ID = 'YOUR_GOOGLE_CLIENT_ID.apps.googleusercontent.com';
+
+async function handleGoogleAuth(): Promise<GoogleAuthResponse> {
+  try {
+    const redirectUri = `https://${chrome.runtime.id}.chromiumapp.org/`;
+
+    const params = new URLSearchParams({
+      client_id: GOOGLE_CLIENT_ID,
+      redirect_uri: redirectUri,
+      response_type: 'code',
+      scope: 'openid email profile',
+      access_type: 'offline',
+      prompt: 'select_account',
+    });
+
+    const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?${params}`;
+
+    // Opens Google consent popup — user selects account
+    const responseUrl = await new Promise<string>((resolve, reject) => {
+      chrome.identity.launchWebAuthFlow(
+        { url: authUrl, interactive: true },
+        (url) => {
+          if (chrome.runtime.lastError || !url) {
+            reject(new Error(chrome.runtime.lastError?.message ?? 'Cancelled'));
+          } else {
+            resolve(url);
+          }
+        }
+      );
+    });
+
+    const code = new URL(responseUrl).searchParams.get('code');
+    if (!code) throw new Error('No auth code received from Google');
+
+    // Send code to our backend
+    const result = await apiRequest<{
+      isNewUser: boolean;
+      accessToken?: string;
+      email?: string;
+      kdfSalt?: string;
+      kdfParams?: { iterations: number; memory: number; parallelism: number };
+      vaultKeyEnc?: string;
+      vaultKeyIv?: string;
+    }>('/api/auth/google/extension', {
+      method: 'POST',
+      body: { code, redirectUri },
+    });
+
+    if (result.isNewUser) {
+      // Store email temporarily — show registration form in popup
+      await chrome.storage.session.set({ pendingGoogleEmail: result.email });
+      return { success: true, isNewUser: true, email: result.email };
+    }
+
+    // Existing Google user — store partial session, ask for master password
+    await chrome.storage.session.set({
+      pendingGoogleSession: {
+        accessToken: result.accessToken,
+        email: result.email,
+        kdfSalt: result.kdfSalt,
+        kdfParams: result.kdfParams,
+        vaultKeyEnc: result.vaultKeyEnc,
+        vaultKeyIv: result.vaultKeyIv,
+      },
+    });
+
+    return {
+      success: true,
+      isNewUser: false,
+      needsMasterPassword: true,
+      email: result.email,
+    };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Google auth failed',
+    };
+  }
+}
+
+async function handleGoogleUnlock(payload: {
+  password: string;
+}): Promise<GoogleUnlockResponse> {
+  try {
+    const r = await chrome.storage.session.get('pendingGoogleSession');
+    const pending = r.pendingGoogleSession as
+      | {
+          accessToken: string;
+          email: string;
+          kdfSalt: string;
+          kdfParams: {
+            iterations: number;
+            memory: number;
+            parallelism: number;
+          };
+          vaultKeyEnc: string;
+          vaultKeyIv: string;
+        }
+      | undefined;
+
+    if (!pending)
+      return {
+        success: false,
+        error: 'Session expired. Try Google login again.',
+      };
+
+    const { vaultKey } = await deriveKeys(
+      payload.password,
+      pending.kdfSalt,
+      pending.kdfParams
+    );
+
+    const masterKeyDecrypted = await decrypt(
+      { ciphertext: pending.vaultKeyEnc, iv: pending.vaultKeyIv },
+      vaultKey
+    );
+
+    const binary = atob(masterKeyDecrypted);
+    const masterKeyBytes = new Uint8Array(
+      binary.length
+    ) as Uint8Array<ArrayBuffer>;
+    for (let i = 0; i < binary.length; i++)
+      masterKeyBytes[i] = binary.charCodeAt(i);
+
+    if (masterKeyBytes.length !== 32) {
+      return { success: false, error: 'Incorrect master password' };
+    }
+
+    await saveSession({
+      masterKey: Array.from(masterKeyBytes),
+      accessToken: pending.accessToken!,
+      email: pending.email!,
+    });
+    await chrome.storage.session.remove('pendingGoogleSession');
+    return { success: true };
+  } catch {
+    return { success: false, error: 'Incorrect master password' };
+  }
+}
+
+async function handleSaveFormFields(payload: {
+  fields: Array<{ name: string; type: string; value: string; label: string }>;
+  domain: string;
+  title: string;
+  url: string;
+  forcesSave?: boolean;
+}): Promise<{ saved: boolean; autoSave: boolean }> {
+  const session = await getSession();
+  if (!session) return { saved: false, autoSave: false };
+
+  // Check auto-save preference (stored locally in chrome.storage.local)
+  const prefs = await chrome.storage.local.get('vaultx_autosave');
+  const autoSave = prefs.vaultx_autosave === true;
+
+  if (!autoSave && !payload.forcesSave) {
+    return { saved: false, autoSave: false };
+  }
+
+  try {
+    const masterKey = new Uint8Array(
+      session.masterKey
+    ) as Uint8Array<ArrayBuffer>;
+
+    // Build ItemPayload from captured fields
+    const itemPayload: Record<string, string> = {
+      title: payload.title || payload.domain,
+      url: payload.url,
+    };
+
+    // Standard fields mapping
+    const standardFields = [
+      'email',
+      'username',
+      'password',
+      'firstName',
+      'lastName',
+      'phone',
+      'address',
+      'city',
+      'zipCode',
+      'country',
+      'birthdate',
+    ];
+
+    const customFields: Array<{
+      id: string;
+      label: string;
+      value: string;
+      type: string;
+    }> = [];
+
+    for (const field of payload.fields) {
+      if (standardFields.includes(field.name)) {
+        itemPayload[field.name] = field.value;
+      } else {
+        // Non-standard field → save as custom field
+        customFields.push({
+          id: crypto.randomUUID(),
+          label: field.label || field.name,
+          value: field.value,
+          type: field.type === 'password' ? 'password' : 'text',
+        });
+      }
+    }
+
+    if (customFields.length > 0) {
+      itemPayload.customFields = JSON.stringify(customFields) as any;
+    }
+
+    itemPayload.passwordChangedAt = new Date().toISOString();
+
+    const { ciphertext, iv } = await encrypt(
+      JSON.stringify(itemPayload),
+      masterKey
+    );
+
+    await apiRequest('/api/vault/items', {
+      method: 'POST',
+      token: session.accessToken,
+      body: {
+        type: 'login',
+        encryptedData: ciphertext,
+        iv,
+        category: null,
+      },
+    });
+
+    return { saved: true, autoSave };
+  } catch (err) {
+    console.error('[VaultX] Save form fields error:', err);
+    return { saved: false, autoSave: false };
+  }
 }

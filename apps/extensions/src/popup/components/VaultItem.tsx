@@ -226,28 +226,30 @@ export default function VaultItem({
   // ── DELETE CONFIRM ─────────────────────────────────────────────────────────
   if (deleteConfirm) {
     return (
-      <div style={card}>
-        <p
-          style={{
-            fontSize: 13,
-            color: '#f1f5f9',
-            margin: '0 0 4px',
-            fontWeight: 600,
-          }}
-        >
-          Delete "{payload.title}"?
-        </p>
-        <p style={{ fontSize: 11, color: '#64748b', margin: '0 0 10px' }}>
-          Cannot be undone.
-        </p>
-        <div style={{ display: 'flex', gap: 8 }}>
+      <div
+        style={{
+          ...card,
+          flexDirection: 'column',
+          padding: '10px 12px',
+          gap: 8,
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <span
+            style={{ fontSize: 13, color: '#f1f5f9', fontWeight: 600, flex: 1 }}
+          >
+            Delete "{payload.title.slice(0, 20)}
+            {payload.title.length > 20 ? '...' : ''}"?
+          </span>
+          <span style={{ fontSize: 11, color: '#64748b' }}>
+            Cannot be undone
+          </span>
           <button
             style={{
               ...btn,
               background: '#dc2626',
               color: '#fff',
-              flex: 1,
-              padding: '7px 0',
+              padding: '4px 10px',
             }}
             onClick={(e) => {
               e.stopPropagation();
@@ -257,7 +259,7 @@ export default function VaultItem({
             Delete
           </button>
           <button
-            style={{ ...btn, flex: 1, padding: '7px 0' }}
+            style={{ ...btn, padding: '4px 10px' }}
             onClick={() => setDeleteConfirm(false)}
           >
             Cancel
