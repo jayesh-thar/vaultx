@@ -1,5 +1,17 @@
 console.log('[VaultX] Content script loaded on', window.location.hostname);
 
+// ── Excluded domains — skip form capture on these ─────────────────────────
+const EXCLUDED_DOMAINS = [
+  'localhost',
+  '127.0.0.1',
+  'bitwarden.com',
+  '1password.com',
+  'lastpass.com',
+];
+const isExcluded = EXCLUDED_DOMAINS.some((d) =>
+  window.location.hostname.includes(d)
+);
+
 // ── Types ──────────────────────────────────────────────────────────────────
 interface CapturedField {
   name: string;
@@ -27,20 +39,15 @@ function fillInput(input: HTMLInputElement, value: string): void {
 
 // ── Get label for an input ────────────────────────────────────────────────
 function getInputLabel(input: HTMLInputElement): string {
-  // Try aria-label
   if (input.ariaLabel) return input.ariaLabel;
-  // Try associated <label>
   if (input.id) {
     const label = document.querySelector<HTMLLabelElement>(
       `label[for="${input.id}"]`
     );
     if (label) return label.textContent?.trim() ?? '';
   }
-  // Try placeholder
   if (input.placeholder) return input.placeholder;
-  // Try name attribute
   if (input.name) return input.name;
-  // Try type
   return input.type || 'field';
 }
 
@@ -81,18 +88,17 @@ function mapFieldToVaultKey(input: HTMLInputElement): string {
     return 'cardNumber';
   if (combined.includes('cvv') || combined.includes('cvc')) return 'cvv';
   if (combined.includes('expir')) return 'expiry';
-
-  // Fall back to the actual name or id
   return name || id || type || 'field';
 }
 
-// ── Find login forms ──────────────────────────────────────────────────────
+// ── Find password input ───────────────────────────────────────────────────
 function findPasswordInput(): HTMLInputElement | null {
   return document.querySelector<HTMLInputElement>(
     'input[type="password"]:not([style*="display: none"])'
   );
 }
 
+// ── Capture all visible filled inputs ─────────────────────────────────────
 function findAllFormInputs(): CapturedField[] {
   const inputs = Array.from(
     document.querySelectorAll<HTMLInputElement>('input, select, textarea')
@@ -102,15 +108,10 @@ function findAllFormInputs(): CapturedField[] {
 
   for (const input of inputs) {
     if (
-      input.type === 'hidden' ||
-      input.type === 'submit' ||
-      input.type === 'button' ||
-      input.type === 'checkbox' ||
-      input.type === 'radio'
+      ['hidden', 'submit', 'button', 'checkbox', 'radio'].includes(input.type)
     )
       continue;
     if (!input.value?.trim()) continue;
-
     const style = window.getComputedStyle(input);
     if (style.display === 'none' || style.visibility === 'hidden') continue;
 
@@ -125,130 +126,62 @@ function findAllFormInputs(): CapturedField[] {
       label: getInputLabel(input as HTMLInputElement),
     });
   }
-
   return fields;
 }
 
-// ── Autofill handler (called from popup) ─────────────────────────────────
-function autofillCredentials(credentials: {
-  username?: string;
-  email?: string;
-  password?: string;
-  [key: string]: string | undefined;
-}) {
+// ── Autofill credentials into form ────────────────────────────────────────
+function autofillCredentials(credentials: Record<string, string | undefined>) {
   const inputs = Array.from(
     document.querySelectorAll<HTMLInputElement>('input')
   );
-
   for (const input of inputs) {
     const key = mapFieldToVaultKey(input);
     const value = credentials[key];
-    if (value) {
-      fillInput(input, value);
-    }
+    if (value) fillInput(input, value);
   }
 }
 
-// ── Save form submission ──────────────────────────────────────────────────
-let formSubmitHandler: ((e: Event) => void) | null = null;
-
-function setupFormSubmitCapture() {
-  if (formSubmitHandler) return; // already set up
-
-  formSubmitHandler = async (e: Event) => {
-    const passwordInput = findPasswordInput();
-    if (!passwordInput || !passwordInput.value.trim()) return;
-
-    const fields = findAllFormInputs();
-    if (fields.length < 2) return; // not a real form
-
-    const domain = window.location.hostname;
-    const title = document.title || domain;
-
-    // Ask service worker to check auto-save preference + save
-    const response = (await chrome.runtime.sendMessage({
-      type: 'SAVE_FORM_FIELDS',
-      payload: { fields, domain, title, url: window.location.href },
-    })) as { saved: boolean; autoSave: boolean } | null;
-
-    if (response?.saved) {
-      showSaveToast('✓ Saved to VaultX');
-    } else if (response && !response.autoSave) {
-      showSaveBanner(fields, domain, title);
-    }
-  };
-
-  // Attach to all forms
-  document.querySelectorAll('form').forEach((form) => {
-    form.addEventListener('submit', formSubmitHandler!);
-  });
-
-  // Also watch for submit buttons clicked without form submit event
-  document
-    .querySelectorAll<HTMLButtonElement>(
-      'button[type="submit"], input[type="submit"]'
-    )
-    .forEach((btn) => {
-      btn.addEventListener('click', () => {
-        setTimeout(() => formSubmitHandler!(new Event('submit')), 100);
-      });
-    });
+// ── HTML escape helper ────────────────────────────────────────────────────
+function escapeHtml(str: string): string {
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
 }
 
-// ── Save toast (shown when auto-save is ON) ───────────────────────────────
+// ── Save toast (auto-save ON) ─────────────────────────────────────────────
 function showSaveToast(message: string) {
-  const existing = document.getElementById('vaultx-toast');
-  existing?.remove();
-
+  document.getElementById('vaultx-toast')?.remove();
   const toast = document.createElement('div');
   toast.id = 'vaultx-toast';
   toast.style.cssText = `
-    position: fixed;
-    bottom: 20px;
-    right: 20px;
-    background: #10b981;
-    color: #fff;
-    padding: 10px 16px;
-    border-radius: 8px;
-    font-size: 13px;
-    font-family: -apple-system, sans-serif;
-    font-weight: 600;
-    z-index: 2147483647;
-    box-shadow: 0 4px 16px rgba(16,185,129,0.4);
-    animation: vx-slide-in 0.3s ease;
+    position:fixed;bottom:20px;right:20px;
+    background:#10b981;color:#fff;
+    padding:10px 16px;border-radius:8px;
+    font-size:13px;font-family:-apple-system,sans-serif;font-weight:600;
+    z-index:2147483647;box-shadow:0 4px 16px rgba(16,185,129,0.4);
   `;
   toast.textContent = message;
-
-  const style = document.createElement('style');
-  style.textContent = `@keyframes vx-slide-in { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }`;
-  document.head.appendChild(style);
   document.body.appendChild(toast);
   setTimeout(() => toast.remove(), 3000);
 }
 
-// ── Save banner (shown when auto-save is OFF) ─────────────────────────────
+// ── Save banner (auto-save OFF) ───────────────────────────────────────────
 function showSaveBanner(
   fields: CapturedField[],
   domain: string,
   title: string
 ) {
-  const existing = document.getElementById('vaultx-save-banner');
-  existing?.remove();
+  document.getElementById('vaultx-save-banner')?.remove();
 
   const banner = document.createElement('div');
   banner.id = 'vaultx-save-banner';
   banner.style.cssText = `
-    position: fixed;
-    bottom: 20px;
-    right: 20px;
-    width: 280px;
-    background: #1e293b;
-    border: 1px solid #334155;
-    border-radius: 12px;
-    padding: 14px;
-    font-family: -apple-system, sans-serif;
-    z-index: 2147483647;
-    box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+    position:fixed;bottom:20px;right:20px;width:280px;
+    background:#1e293b;border:1px solid #334155;border-radius:12px;
+    padding:14px;font-family:-apple-system,sans-serif;
+    z-index:2147483647;box-shadow:0 8px 32px rgba(0,0,0,0.5);
   `;
 
   const emailField = fields.find(
@@ -265,7 +198,7 @@ function showSaveBanner(
       </div>
       <button id="vaultx-banner-close" style="background:none;border:none;color:#475569;cursor:pointer;font-size:16px;padding:0;line-height:1;">✕</button>
     </div>
-    <p style="font-size:11px;color:#64748b;margin:0 0 10px;">${fields.length} field${fields.length !== 1 ? 's' : ''} to save</p>
+    <p style="font-size:11px;color:#64748b;margin:0 0 10px;">${fields.length} field${fields.length !== 1 ? 's' : ''} detected</p>
     <div style="display:flex;gap:8px;">
       <button id="vaultx-banner-save" style="flex:1;padding:8px 0;border-radius:7px;border:none;background:#10b981;color:#fff;font-size:12px;font-weight:600;cursor:pointer;">Save to VaultX</button>
       <button id="vaultx-banner-ignore" style="flex:1;padding:8px 0;border-radius:7px;border:1px solid #334155;background:transparent;color:#64748b;font-size:12px;cursor:pointer;">Not now</button>
@@ -274,73 +207,149 @@ function showSaveBanner(
 
   document.body.appendChild(banner);
 
-  document
-    .getElementById('vaultx-banner-ignore')
-    ?.addEventListener('click', async () => {
-      banner.remove();
-      // Save to pending queue — user can recover from extension within 10 min
-      await chrome.runtime.sendMessage({
-        type: 'SAVE_PENDING_CREDENTIAL',
-        payload: { fields, domain, title, url: window.location.href },
-      });
-    });
+  const pendingPayload = { fields, domain, title, url: window.location.href };
 
+  // Close — save to pending queue
   document
     .getElementById('vaultx-banner-close')
     ?.addEventListener('click', async () => {
       banner.remove();
       await chrome.runtime.sendMessage({
         type: 'SAVE_PENDING_CREDENTIAL',
-        payload: { fields, domain, title, url: window.location.href },
+        payload: pendingPayload,
       });
     });
+
+  // Not now — save to pending queue
+  document
+    .getElementById('vaultx-banner-ignore')
+    ?.addEventListener('click', async () => {
+      banner.remove();
+      await chrome.runtime.sendMessage({
+        type: 'SAVE_PENDING_CREDENTIAL',
+        payload: pendingPayload,
+      });
+    });
+
+  // Save now
   document
     .getElementById('vaultx-banner-save')
     ?.addEventListener('click', async () => {
       banner.remove();
-      await chrome.runtime.sendMessage({
+      const res = (await chrome.runtime.sendMessage({
         type: 'SAVE_FORM_FIELDS',
-        payload: {
-          fields,
-          domain,
-          title,
-          url: window.location.href,
-          forcesSave: true,
-        },
-      });
-      showSaveToast('✓ Saved to VaultX');
+        payload: { ...pendingPayload, forceSave: true },
+      })) as { saved: boolean } | null;
+      showSaveToast(
+        res?.saved ? '✓ Saved to VaultX' : '✗ Save failed — are you logged in?'
+      );
     });
 
-  // Auto-dismiss after 15 seconds
-  setTimeout(() => banner.remove(), 15000);
+  // Auto-dismiss after 15 seconds — save to pending
+  setTimeout(async () => {
+    if (document.getElementById('vaultx-save-banner')) {
+      banner.remove();
+      await chrome.runtime.sendMessage({
+        type: 'SAVE_PENDING_CREDENTIAL',
+        payload: pendingPayload,
+      });
+    }
+  }, 15000);
 }
 
-function escapeHtml(str: string): string {
-  return str
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
+// ── Form submit capture ───────────────────────────────────────────────────
+let formSubmitHandler: ((e: Event) => void) | null = null;
+let observerSetup = false;
+
+function setupFormSubmitCapture() {
+  if (formSubmitHandler) return;
+
+  formSubmitHandler = async (_e: Event) => {
+    // Small delay so form values are still in DOM after submit
+    await new Promise((r) => setTimeout(r, 150));
+
+    const passwordInput = findPasswordInput();
+    if (!passwordInput || !passwordInput.value.trim()) return;
+
+    const fields = findAllFormInputs();
+    if (fields.length < 2) return;
+
+    const domain = window.location.hostname;
+    const title = document.title || domain;
+
+    const response = (await chrome.runtime.sendMessage({
+      type: 'SAVE_FORM_FIELDS',
+      payload: { fields, domain, title, url: window.location.href },
+    })) as { saved: boolean; autoSave: boolean } | null;
+
+    if (response?.saved) {
+      showSaveToast('✓ Saved to VaultX');
+    } else if (response && !response.autoSave) {
+      showSaveBanner(fields, domain, title);
+    }
+  };
+
+  // Attach to existing forms
+  document.querySelectorAll('form').forEach((form) => {
+    form.addEventListener('submit', formSubmitHandler!);
+  });
+
+  // Submit buttons that don't trigger form submit event
+  document
+    .querySelectorAll<HTMLButtonElement>(
+      'button[type="submit"], input[type="submit"]'
+    )
+    .forEach((btn) => {
+      btn.addEventListener('click', () => {
+        setTimeout(() => formSubmitHandler!(new Event('submit')), 200);
+      });
+    });
+
+  // MutationObserver for SPAs — re-attach to new forms added to DOM
+  if (!observerSetup) {
+    observerSetup = true;
+    let scanTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const observer = new MutationObserver(() => {
+      if (scanTimer) clearTimeout(scanTimer);
+      scanTimer = setTimeout(() => {
+        // Attach handler to any new forms
+        document.querySelectorAll('form').forEach((form) => {
+          if (!(form as any).__vaultx_attached) {
+            form.addEventListener('submit', formSubmitHandler!);
+            (form as any).__vaultx_attached = true;
+          }
+        });
+        scanTimer = null;
+      }, 500);
+    });
+
+    observer.observe(document.body, { childList: true, subtree: true });
+
+    window.addEventListener('beforeunload', () => observer.disconnect());
+  }
 }
 
-// ── Message listener (from popup or service worker) ───────────────────────
+// ── Message listener ──────────────────────────────────────────────────────
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg.type === 'AUTOFILL_CREDENTIALS') {
     autofillCredentials(msg.payload);
     sendResponse({ success: true });
+    return true;
   }
-
   if (msg.type === 'GET_FORM_FIELDS') {
     sendResponse({ fields: findAllFormInputs() });
+    return true;
   }
-
   if (msg.type === 'SETUP_FORM_CAPTURE') {
     setupFormSubmitCapture();
     sendResponse({ success: true });
+    return true;
   }
-
   return true;
 });
 
-// Always set up form capture
-setupFormSubmitCapture();
+// ── Init — only on non-excluded domains ───────────────────────────────────
+if (!isExcluded) {
+  setupFormSubmitCapture();
+}

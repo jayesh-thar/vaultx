@@ -24,6 +24,25 @@ import type {
   ItemPayload,
 } from '../types';
 
+chrome.alarms.create('auto-lock-check', { periodInMinutes: 1 });
+
+chrome.alarms.onAlarm.addListener(async (alarm) => {
+  if (alarm.name !== 'auto-lock-check') return;
+
+  const r = await chrome.storage.session.get('lastActivity');
+  const lastActivity = r.lastActivity as number | undefined;
+
+  if (!lastActivity) return;
+
+  const inactiveMs = Date.now() - lastActivity;
+  const fifteenMin = 15 * 60 * 1000;
+
+  if (inactiveMs > fifteenMin) {
+    await clearSession();
+    console.log('[VaultX] Auto-locked due to inactivity');
+  }
+});
+
 // ─── Session Helpers ─────────────────────────────────────────────────────────
 // chrome.storage.session = in-memory storage. Survives SW restarts within the
 // same browser session. Cleared when browser closes. Perfect for masterKey.
@@ -183,6 +202,14 @@ async function handleGetVaultItems(): Promise<GetVaultItemsResponse> {
   const session = await getSession();
   if (!session) return { success: false, error: 'Not logged in' };
 
+  // Check if online
+  if (!navigator.onLine) {
+    return {
+      success: false,
+      error: 'You are offline. Connect to the internet and try again.',
+    };
+  }
+
   try {
     const res = await apiRequest<VaultItem[] | { items: VaultItem[] }>(
       '/api/vault/items',
@@ -213,11 +240,12 @@ async function handleGetVaultItems(): Promise<GetVaultItemsResponse> {
           id: item.id,
           type: item.type,
           category: item.category,
+          created_at: item.created_at,
           payload,
         };
       })
     );
-
+    await chrome.storage.session.set({ lastActivity: Date.now() });
     return { success: true, items: decrypted };
   } catch (err) {
     const message =

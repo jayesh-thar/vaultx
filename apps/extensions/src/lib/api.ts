@@ -1,6 +1,3 @@
-// Fetch wrapper for VaultX Express API
-// All API calls go through the service worker — never directly from content script
-
 const API_BASE = 'http://localhost:5000';
 
 interface ApiOptions {
@@ -13,7 +10,7 @@ async function refreshAccessToken(): Promise<string | null> {
   try {
     const res = await fetch(`${API_BASE}/api/auth/refresh`, {
       method: 'POST',
-      credentials: 'include', // sends httpOnly refresh token cookie
+      credentials: 'include',
     });
     if (!res.ok) return null;
     const data = await res.json();
@@ -34,26 +31,28 @@ export async function apiRequest<T>(
   };
   if (token) headers['Authorization'] = `Bearer ${token}`;
 
-  const res = await fetch(`${API_BASE}${path}`, {
+  let res = await fetch(`${API_BASE}${path}`, {
     method,
     headers,
     credentials: 'include',
     body: body ? JSON.stringify(body) : undefined,
   });
 
-  // Auto-refresh on 401 — try once
+  // Auto-refresh on 401
   if (res.status === 401 && token) {
     const newToken = await refreshAccessToken();
+
     if (newToken) {
-      // Update session with new token
+      // Update stored session with new token
       const sessionRes = await chrome.storage.session.get('session');
       if (sessionRes.session) {
         await chrome.storage.session.set({
           session: { ...sessionRes.session, accessToken: newToken },
         });
       }
-      // Retry original request with new token
-      const retry = await fetch(`${API_BASE}${path}`, {
+
+      // Retry with new token
+      res = await fetch(`${API_BASE}${path}`, {
         method,
         headers: {
           'Content-Type': 'application/json',
@@ -62,24 +61,30 @@ export async function apiRequest<T>(
         credentials: 'include',
         body: body ? JSON.stringify(body) : undefined,
       });
-      if (!retry.ok) {
-        const err = await retry
-          .json()
-          .catch(() => ({ message: retry.statusText }));
-        throw new Error(err.message || `API error ${retry.status}`);
-      }
-      return retry.json() as Promise<T>;
     } else {
-      // Refresh failed — session truly expired, clear it
+      // Refresh failed — session truly expired
       await chrome.storage.session.remove('session');
       throw new Error('SESSION_EXPIRED');
     }
   }
 
   if (!res.ok) {
-    const err = await res.json().catch(() => ({ message: res.statusText }));
-    throw new Error(err.message || `API error ${res.status}`);
+    let errMsg = `API error ${res.status}`;
+    try {
+      const err = await res.json();
+      errMsg = err.message ?? err.error ?? errMsg;
+    } catch {
+      /* ignore */
+    }
+    throw new Error(errMsg);
   }
 
-  return res.json() as Promise<T>;
+  // Handle empty responses (DELETE endpoints return 200 with no body)
+  const text = await res.text();
+  if (!text) return {} as T;
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    return text as unknown as T;
+  }
 }

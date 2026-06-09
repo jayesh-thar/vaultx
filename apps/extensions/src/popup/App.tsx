@@ -10,18 +10,41 @@ export default function App() {
   const [view, setView] = useState<View>('loading');
 
   useEffect(() => {
-    // On every popup open: ask SW if session exists
-    chrome.runtime
-      .sendMessage<object, CheckSessionResponse>({ type: MSG.CHECK_SESSION })
-      .then((res) => {
-        setView(res.isLoggedIn ? 'vault' : 'login');
-      });
+    checkSession();
   }, []);
+
+  async function checkSession() {
+    try {
+      const res = await chrome.runtime.sendMessage<
+        object,
+        CheckSessionResponse
+      >({
+        type: MSG.CHECK_SESSION,
+      });
+      setView(res.isLoggedIn ? 'vault' : 'login');
+    } catch {
+      setView('login');
+    }
+  }
 
   if (view === 'loading') {
     return (
-      <div style={centerStyle}>
-        <p style={{ color: '#6b7280', fontSize: 14 }}>Loading...</p>
+      <div
+        style={{
+          width: 400,
+          height: 200,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          background: '#0f172a',
+        }}
+      >
+        <div style={{ textAlign: 'center' }}>
+          <div style={{ fontSize: 28, marginBottom: 8 }}>🔐</div>
+          <p style={{ color: '#64748b', fontSize: 13, margin: 0 }}>
+            Loading VaultX...
+          </p>
+        </div>
       </div>
     );
   }
@@ -32,11 +55,3 @@ export default function App() {
 
   return <Vault onLogout={() => setView('login')} />;
 }
-
-const centerStyle: React.CSSProperties = {
-  width: 360,
-  height: 200,
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-};
