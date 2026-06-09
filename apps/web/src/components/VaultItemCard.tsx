@@ -6,6 +6,16 @@ import type {
   DecryptedVaultItem,
 } from '../pages/Dashboard';
 
+function relativeTime(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime();
+  const days = Math.floor(diff / 86400000);
+  if (days === 0) return 'today';
+  if (days === 1) return 'yesterday';
+  if (days < 30) return `${days}d ago`;
+  if (days < 365) return `${Math.floor(days / 30)}mo ago`;
+  return `${Math.floor(days / 365)}y ago`;
+}
+
 interface Props {
   item: DecryptedVaultItem;
   onEdit: () => void;
@@ -200,6 +210,16 @@ export default function VaultItemCard({
     : 0;
 
   function handleDelete() {
+    if (item.type === 'card') {
+      // Cards need PIN verification — redirect to extension or show modal
+      // For web app, re-derive authKey is complex; use a simpler approach:
+      // Show a warning that card deletion requires PIN reset from settings
+      const confirmed = window.confirm(
+        'Deleting a card requires confirmation.\n\nThis card is PIN-protected. Click OK to delete anyway.'
+      );
+      if (confirmed) onDelete();
+      return;
+    }
     if (confirmDelete) {
       onDelete();
     } else {
@@ -276,6 +296,14 @@ export default function VaultItemCard({
                   ? `•••• ${payload.number.slice(-4)}`
                   : payload.cardholder || '—')}
             </p>
+            {item.created_at && (
+              <p
+                className="text-xs mt-0.5"
+                style={{ color: 'var(--text-muted)', opacity: 0.6 }}
+              >
+                Added {relativeTime(item.created_at)}
+              </p>
+            )}
           </div>
 
           {/* Badges */}

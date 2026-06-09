@@ -93,6 +93,8 @@ function Field({
             textOverflow: 'ellipsis',
             whiteSpace: 'nowrap',
             fontFamily: secret ? 'monospace' : 'inherit',
+            maxWidth: 'calc(100% - 80px)', // leave room for buttons
+            display: 'block',
           }}
         >
           {secret && !show ? '••••••••' : value}
@@ -582,6 +584,7 @@ const fieldGrid: React.CSSProperties = {
   gridTemplateColumns: '1fr 1fr',
   gap: 8,
   paddingTop: 10,
+  overflow: 'hidden',
 };
 const pwAgeStyle: React.CSSProperties = {
   fontSize: 11,

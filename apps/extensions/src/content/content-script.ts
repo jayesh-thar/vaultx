@@ -236,12 +236,24 @@ function showSaveBanner(
     .getElementById('vaultx-banner-save')
     ?.addEventListener('click', async () => {
       banner.remove();
+
+      // Wake up service worker first
+      try {
+        await chrome.runtime.sendMessage({ type: 'CHECK_SESSION' });
+      } catch {
+        /* ignore */
+      }
+
+      // Small delay for SW to wake up
+      await new Promise((r) => setTimeout(r, 200));
+
       const res = (await chrome.runtime.sendMessage({
         type: 'SAVE_FORM_FIELDS',
         payload: { ...pendingPayload, forceSave: true },
       })) as { saved: boolean } | null;
+
       showSaveToast(
-        res?.saved ? '✓ Saved to VaultX' : '✗ Save failed — are you logged in?'
+        res?.saved ? '✓ Saved to VaultX' : '✗ Not logged in to VaultX'
       );
     });
 

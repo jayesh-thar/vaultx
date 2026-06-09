@@ -363,6 +363,18 @@ export default function Dashboard() {
     void fetchItems();
   }, [fetchItems]);
 
+  useEffect(() => {
+    function handleVisibilityChange() {
+      if (document.visibilityState === 'visible') {
+        // Re-fetch when tab becomes active again
+        void fetchItems();
+      }
+    }
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () =>
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, [fetchItems]);
+
   // ── Filter ─────────────────────────────────────────────────────────────────
 
   const displayedItems = useMemo(() => {
