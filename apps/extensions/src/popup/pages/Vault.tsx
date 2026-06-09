@@ -3,7 +3,6 @@ import { MSG } from '../../lib/messages';
 import type {
   GetVaultItemsResponse,
   CheckSessionResponse,
-  SaveFormFieldsRequest,
 } from '../../lib/messages';
 import type { DecryptedItem } from '../../types';
 import VaultItem from '../components/VaultItem';
@@ -29,7 +28,7 @@ export default function Vault({ onLogout }: Props) {
     title: string;
     domain: string;
     url: string;
-    fields: Array<{ name: string; value: string; label: string }>;
+    fields: Array<{ name: string; type: string; value: string; label: string }>;
     expiresAt: number;
   } | null>(null);
 
@@ -402,7 +401,7 @@ export default function Vault({ onLogout }: Props) {
                 await chrome.runtime.sendMessage({
                   type: MSG.SAVE_FORM_FIELDS,
                   payload: { ...pendingCred, forceSave: true },
-                } satisfies SaveFormFieldsRequest);
+                });
                 await chrome.runtime.sendMessage({
                   type: MSG.CLEAR_PENDING_CREDENTIAL,
                 });
