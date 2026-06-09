@@ -17,6 +17,7 @@ import {
   verifyCardPin,
   resetCardPin,
   resetCardPinWithOtp,
+  googleExtensionAuth,
 } from './auth.controller';
 import { authenticate } from '../../middleware/authenticate';
 import { validateEmailDomain } from '../../middleware/emailValidator';
@@ -59,5 +60,6 @@ router.post('/card-pin/set', authenticate, setCardPin);
 router.post('/card-pin/verify', authenticate, verifyCardPin);
 router.delete('/card-pin', authenticate, resetCardPin);
 router.post('/card-pin/reset-with-otp', authenticate, resetCardPinWithOtp);
+router.post('/google/extension', googleExtensionAuth);
 
 export default router;

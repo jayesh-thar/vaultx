@@ -25,7 +25,7 @@ const REFRESH_TTL = 7 * 24 * 60 * 60; // 7 days in seconds
 // ─── Internal helper ─────────────────────────────────────────────────────────
 // Creates a session in DB + Redis, returns both tokens
 // Called by register AND login — don't repeat this logic twice
-async function createSession(userId: string, deviceInfo: object) {
+export async function createSession(userId: string, deviceInfo: object) {
   const sessionId = generateSecureId();
   const accessToken = signAccessToken({ userId, sessionId });
   const refreshToken = signRefreshToken({ userId, sessionId });

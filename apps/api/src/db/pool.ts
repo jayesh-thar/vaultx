@@ -5,9 +5,10 @@ dotenv.config();
 
 export const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  max: 10, // max 10 simultaneous DB connections
-  idleTimeoutMillis: 30000, // close idle connections after 30s
-  connectionTimeoutMillis: 2000, // fail fast if DB unreachable
+  ssl:
+    process.env.NODE_ENV === 'production'
+      ? { rejectUnauthorized: true }
+      : { rejectUnauthorized: false }, // allows Neon in dev too
 });
 
 pool.on('error', (err) => {

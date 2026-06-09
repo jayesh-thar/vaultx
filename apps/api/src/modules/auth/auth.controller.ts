@@ -541,3 +541,99 @@ export async function resetCardPinWithOtp(
     res.status(500).json({ error: 'Failed to reset PIN' });
   }
 }
+
+export async function googleExtensionAuth(
+  req: Request,
+  res: Response
+): Promise<void> {
+  try {
+    const { code, redirectUri } = req.body;
+    if (!code || !redirectUri) {
+      res.status(400).json({ error: 'Missing code or redirectUri' });
+      return;
+    }
+
+    // Exchange auth code for Google tokens
+    const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        code,
+        client_id: process.env.GOOGLE_CLIENT_ID!,
+        client_secret: process.env.GOOGLE_CLIENT_SECRET!,
+        redirect_uri: redirectUri,
+        grant_type: 'authorization_code',
+      }),
+    });
+
+    const tokenData = (await tokenRes.json()) as {
+      access_token?: string;
+      error?: string;
+    };
+    if (!tokenData.access_token) {
+      res
+        .status(400)
+        .json({ error: tokenData.error ?? 'Failed to exchange code' });
+      return;
+    }
+
+    // Get user info from Google
+    const userRes = await fetch(
+      'https://www.googleapis.com/oauth2/v2/userinfo',
+      {
+        headers: { Authorization: `Bearer ${tokenData.access_token}` },
+      }
+    );
+    const googleUser = (await userRes.json()) as {
+      email: string;
+      name?: string;
+      picture?: string;
+      id: string;
+    };
+
+    if (!googleUser.email) {
+      res.status(400).json({ error: 'Could not get email from Google' });
+      return;
+    }
+
+    const email = googleUser.email.toLowerCase().trim();
+    const deviceInfo = { ip: req.ip, userAgent: req.headers['user-agent'] };
+
+    // Check if user exists
+    const existing = await pool.query(
+      'SELECT id, kdf_salt, kdf_params, vault_key_enc, vault_key_iv FROM users WHERE email = $1',
+      [email]
+    );
+
+    if (existing.rows.length > 0) {
+      const user = existing.rows[0];
+      const { createSession } = await import('./auth.service.js');
+      const tokens = await createSession(user.id, deviceInfo);
+
+      const rawParams = user.kdf_params;
+      const kdfParams =
+        typeof rawParams === 'string' ? JSON.parse(rawParams) : rawParams;
+
+      res.json({
+        isNewUser: false,
+        accessToken: tokens.accessToken,
+        userId: user.id,
+        email,
+        kdfSalt: user.kdf_salt,
+        kdfParams,
+        vaultKeyEnc: user.vault_key_enc,
+        vaultKeyIv: user.vault_key_iv,
+      });
+    } else {
+      // New user — return flag, extension will redirect to web app setup
+      res.json({
+        isNewUser: true,
+        email,
+        name: googleUser.name,
+      });
+    }
+  } catch (err) {
+    console.error('googleExtensionAuth error:', err);
+    res.status(500).json({ error: 'Google authentication failed' });
+  }
+}
