@@ -87,11 +87,8 @@ export default function App() {
           <Route path="/share/:id" element={<ShareView />} />
           <Route path="/forgot-password" element={<ForgotPassword />} />
           <Route path="/auth/google/setup" element={<GoogleSetup />} />{' '}
-          {/* ADD - next section */}
           <Route path="/auth/google/unlock" element={<GoogleUnlock />} />{' '}
-          {/* ADD - next section */}
           <Route path="*" element={<Navigate to="/login" replace />} />{' '}
-          {/* ALWAYS LAST */}
         </Routes>
       </BrowserRouter>
       <ToastContainer />

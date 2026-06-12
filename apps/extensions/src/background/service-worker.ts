@@ -1,6 +1,6 @@
 import { apiRequest } from '../lib/api';
 import { deriveKeys, toHex } from '../lib/kdf';
-import { decrypt, encrypt } from '../lib/crypto';
+import { decrypt, decryptBytes, encrypt } from '../lib/crypto';
 import { MSG } from '../lib/messages';
 import type {
   ExtensionMessage,
@@ -496,17 +496,10 @@ async function handleGoogleUnlock(payload: {
       pending.kdfParams
     );
 
-    const masterKeyDecrypted = await decrypt(
+    const masterKeyBytes = await decryptBytes(
       { ciphertext: pending.vaultKeyEnc, iv: pending.vaultKeyIv },
       vaultKey
     );
-
-    const binary = atob(masterKeyDecrypted);
-    const masterKeyBytes = new Uint8Array(
-      binary.length
-    ) as Uint8Array<ArrayBuffer>;
-    for (let i = 0; i < binary.length; i++)
-      masterKeyBytes[i] = binary.charCodeAt(i);
 
     if (masterKeyBytes.length !== 32) {
       return { success: false, error: 'Incorrect master password' };
@@ -514,12 +507,13 @@ async function handleGoogleUnlock(payload: {
 
     await saveSession({
       masterKey: Array.from(masterKeyBytes),
-      accessToken: pending.accessToken!,
-      email: pending.email!,
+      accessToken: pending.accessToken,
+      email: pending.email,
     });
     await chrome.storage.session.remove('pendingGoogleSession');
     return { success: true };
-  } catch {
+  } catch (err) {
+    console.error('[VaultX] handleGoogleUnlock error:', err);
     return { success: false, error: 'Incorrect master password' };
   }
 }

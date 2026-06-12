@@ -277,7 +277,6 @@ function setupFormSubmitCapture() {
   if (formSubmitHandler) return;
 
   formSubmitHandler = async (_e: Event) => {
-    // Small delay so form values are still in DOM after submit
     await new Promise((r) => setTimeout(r, 150));
 
     const passwordInput = findPasswordInput();
@@ -285,6 +284,16 @@ function setupFormSubmitCapture() {
 
     const fields = findAllFormInputs();
     if (fields.length < 2) return;
+
+    // CHECK SESSION FIRST — don't show banner if not logged in
+    try {
+      const session = (await chrome.runtime.sendMessage({
+        type: 'CHECK_SESSION',
+      })) as { isLoggedIn: boolean };
+      if (!session?.isLoggedIn) return; // not logged in — silent, don't interrupt user
+    } catch {
+      return; // extension not available
+    }
 
     const domain = window.location.hostname;
     const title = document.title || domain;

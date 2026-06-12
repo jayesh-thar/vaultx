@@ -24,7 +24,7 @@ export async function getVaultItems(userId: string) {
     [userId]
   );
 
-  logAuditEvent(userId, 'login_success', { success: true });
+  // logAuditEvent(userId, 'login_success', { success: true });
   return result.rows;
 }
 

@@ -6,14 +6,6 @@ import { decryptBytes } from '../lib/crypto';
 import { saveSession } from '../lib/storage';
 import { useVaultStore } from '../store/useVaultStore';
 
-// Update this interface
-interface LoginResponse {
-  accessToken: string;
-  userId: string;
-  vaultKeyEnc: string;
-  vaultKeyIv: string;
-}
-
 export default function Login() {
   const navigate = useNavigate();
   const { setAuth, setVaultKey } = useVaultStore();
@@ -39,13 +31,11 @@ export default function Login() {
       });
       const { kdfSalt, kdfParams: rawParams } = preRes.data;
 
-      // Guard: fake response means email not found
       if (!kdfSalt || kdfSalt === 'notfound' || kdfSalt.length < 32) {
         setError('No account found with this email address.');
         return;
       }
 
-      // Parse kdfParams whether it's a string (TEXT column) or object (JSONB column)
       const kdfParams =
         typeof rawParams === 'string'
           ? JSON.parse(rawParams)
@@ -107,7 +97,6 @@ export default function Login() {
           border: '0.5px solid var(--border)',
         }}
       >
-        {/* Logo */}
         <div className="flex flex-col items-center mb-8">
           <div
             className="flex items-center justify-center w-12 h-12 rounded-xl mb-4"
@@ -142,7 +131,6 @@ export default function Login() {
           </p>
         </div>
 
-        {/* Error */}
         {error && (
           <div
             className="rounded-lg px-4 py-3 mb-5 text-sm"
@@ -153,7 +141,6 @@ export default function Login() {
         )}
 
         <div className="flex flex-col gap-4">
-          {/* Email */}
           <div>
             <label
               className="block text-xs font-medium mb-1.5"
@@ -176,7 +163,6 @@ export default function Login() {
             />
           </div>
 
-          {/* Password */}
           <div>
             <div className="flex items-center justify-between mb-1.5">
               <label
@@ -219,7 +205,6 @@ export default function Login() {
             </div>
           </div>
 
-          {/* Google Auth */}
           <div className="flex items-center gap-3">
             <div
               className="flex-1 h-px"
@@ -264,7 +249,6 @@ export default function Login() {
             Continue with Google
           </a>
 
-          {/* Submit */}
           <button
             onClick={handleSubmit}
             disabled={loading}

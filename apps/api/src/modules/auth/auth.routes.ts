@@ -29,6 +29,11 @@ import {
 import { hibpCheck } from '../../middleware/hibp';
 import { googleAuth, googleCallback, googleSetupComplete } from './auth.google';
 import { sendOTP, verifyOTP } from './auth.otp';
+import {
+  requestPasswordReset,
+  verifyResetToken,
+  completePasswordReset,
+} from './auth.reset';
 
 const router = Router();
 
