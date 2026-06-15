@@ -2074,6 +2074,10 @@ function CardPinReset() {
   const [confirmPin, setConfirmPin] = useState('');
   const [pinError, setPinError] = useState('');
   const [saving, setSaving] = useState(false);
+  const [directPin, setDirectPin] = useState('');
+  const [directConfirmPin, setDirectConfirmPin] = useState('');
+  const [directError, setDirectError] = useState('');
+  const [directSaving, setDirectSaving] = useState(false);
 
   const otpCode = otpDigits.join('');
   const otpExpired = step === 'otp_sent' && otpTimer <= 0;
@@ -2090,6 +2094,29 @@ function CardPinReset() {
     const id = setTimeout(() => setOtpTimer((t) => t - 1), 1000);
     return () => clearTimeout(id);
   }, [otpTimer]);
+
+  async function handleDirectSetPin() {
+    if (directPin.length < 4) {
+      setDirectError('At least 4 digits required');
+      return;
+    }
+    if (directPin !== directConfirmPin) {
+      setDirectError("PINs don't match");
+      setDirectConfirmPin('');
+      return;
+    }
+    setDirectSaving(true);
+    setDirectError('');
+    try {
+      await api.post('/api/auth/card-pin/set', { pin: directPin });
+      setPinExists(true);
+      setStep('done');
+    } catch (e: any) {
+      setDirectError(e.response?.data?.error ?? 'Failed to set PIN');
+    } finally {
+      setDirectSaving(false);
+    }
+  }
 
   async function sendOtp() {
     setOtpLoading(true);
@@ -2169,12 +2196,98 @@ function CardPinReset() {
         </div>
       )}
 
-      {step === 'check' && (
+      {step === 'check' && !pinExists && (
         <div className="flex flex-col gap-3">
           <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>
-            {pinExists
-              ? 'Reset your Card PIN using email OTP verification. All cards will re-lock immediately.'
-              : 'Set a Card PIN to protect your payment cards in the extension.'}
+            Set a Card PIN to protect your payment cards in the extension. This
+            PIN is separate from your master password.
+          </p>
+          {directError && (
+            <p className="text-xs" style={{ color: 'var(--danger)' }}>
+              {directError}
+            </p>
+          )}
+          <div>
+            <label
+              className="block text-xs font-medium mb-1"
+              style={{ color: 'var(--text-secondary)' }}
+            >
+              New PIN (4–8 digits)
+            </label>
+            <input
+              type="password"
+              inputMode="numeric"
+              maxLength={8}
+              value={directPin}
+              onChange={(e) => {
+                setDirectPin(e.target.value.replace(/\D/g, ''));
+                setDirectError('');
+              }}
+              placeholder="• • • •"
+              className="w-full rounded-lg px-3 py-2.5 text-sm outline-none vx-input"
+              style={{
+                background: 'var(--bg-elevated)',
+                border: '0.5px solid var(--border)',
+                color: 'var(--text-primary)',
+                letterSpacing: 6,
+                textAlign: 'center',
+              }}
+              autoFocus
+            />
+          </div>
+          <div>
+            <label
+              className="block text-xs font-medium mb-1"
+              style={{ color: 'var(--text-secondary)' }}
+            >
+              Confirm PIN
+            </label>
+            <input
+              type="password"
+              inputMode="numeric"
+              maxLength={8}
+              value={directConfirmPin}
+              onChange={(e) => {
+                setDirectConfirmPin(e.target.value.replace(/\D/g, ''));
+                setDirectError('');
+              }}
+              onKeyDown={(e) => e.key === 'Enter' && handleDirectSetPin()}
+              placeholder="• • • •"
+              className="w-full rounded-lg px-3 py-2.5 text-sm outline-none vx-input"
+              style={{
+                background: 'var(--bg-elevated)',
+                border:
+                  directConfirmPin && directConfirmPin !== directPin
+                    ? '0.5px solid var(--danger)'
+                    : '0.5px solid var(--border)',
+                color: 'var(--text-primary)',
+                letterSpacing: 6,
+                textAlign: 'center',
+              }}
+            />
+          </div>
+          <button
+            onClick={handleDirectSetPin}
+            disabled={directSaving}
+            className="rounded-lg py-2.5 text-sm font-medium"
+            style={{
+              background: 'var(--accent)',
+              color: '#fff',
+              opacity: directSaving ? 0.7 : 1,
+              border: 'none',
+              cursor: 'pointer',
+            }}
+          >
+            {directSaving ? 'Saving...' : 'Set Card PIN'}
+          </button>
+        </div>
+      )}
+
+      {step === 'check' && pinExists && (
+        <div className="flex flex-col gap-3">
+          <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>
+            Reset your Card PIN using email OTP verification. All cards will
+            re-lock immediately.
           </p>
           {otpError && (
             <p className="text-xs" style={{ color: 'var(--danger)' }}>

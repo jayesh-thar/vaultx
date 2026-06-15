@@ -10,6 +10,7 @@ import vaultRoutes from './modules/vault/vault.routes';
 import { globalLimiter } from './middleware/rateLimiter';
 import userRoutes from './modules/user/user.routes';
 import shareRoutes from './modules/share/share.routes';
+import statsRoutes from './modules/stats/stats.routes';
 
 dotenv.config();
 
@@ -25,6 +26,7 @@ app.use(globalLimiter);
 app.use('/api/auth', authRoutes);
 app.use('/api/vault', vaultRoutes);
 app.use('/api/user', userRoutes);
+app.use('/api/stats', statsRoutes);
 
 app.use('/api/share', shareRoutes);
 

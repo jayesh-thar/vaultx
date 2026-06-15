@@ -15,6 +15,7 @@ import { ToastContainer } from './components/Toast';
 import ErrorBoundary from './components/ErrorBoundary';
 import StatsPage from './pages/Stats';
 import ForgotPassword from './pages/ForgotPassword';
+import Landing from './pages/Landing';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { userId, vaultKey } = useVaultStore();
@@ -43,6 +44,7 @@ export default function App() {
     <>
       <BrowserRouter>
         <Routes>
+          <Route path="/" element={<Landing />} />
           <Route path="/login" element={<Login />} />
           <Route path="/register" element={<Register />} />
           <Route path="/unlock" element={<Unlock />} />

@@ -1,278 +1,369 @@
-# VaultX — Zero-Knowledge Password Manager
+# 🔐 VaultX — Zero-Knowledge Password Manager
 
-VaultX is a full-stack password manager built around a zero-knowledge
-architecture: the server never sees your master password or any unencrypted
-vault data. All encryption and decryption happens in the browser using the
-Web Crypto API.
+<p>
+  <img alt="Status" src="https://img.shields.io/badge/status-public%20beta-F59E0B">
+  <img alt="License" src="https://img.shields.io/badge/license-MIT-10B981">
+  <img alt="Stack" src="https://img.shields.io/badge/stack-React%20%7C%20Express%20%7C%20PostgreSQL-3B82F6">
+</p>
 
-This is a monorepo containing three applications:
+> Privacy-first hybrid identity vault exploring zero-knowledge encryption,
+> offline-first architecture, secure sync systems, and cross-platform
+> password management.
 
-| App               | Path              | Stack                                                  |
-| ----------------- | ----------------- | ------------------------------------------------------ |
-| API               | `apps/api`        | Node.js, Express, TypeScript, PostgreSQL (Neon), Redis |
-| Web App           | `apps/web`        | React 18, TypeScript, Vite, Tailwind                   |
-| Browser Extension | `apps/extensions` | React, TypeScript, Vite, Chrome MV3                    |
+**Repo:** <https://github.com/jayesh-thar/vaultx>
 
-Each app has its own detailed README — see:
+VaultX is your single secure vault for everything sensitive — login
+credentials, secure notes, and payment cards. Remember just **one master
+password** to access everything, and a separate **PIN** to unlock your
+saved cards. Use it from anywhere: log in to the web app directly, or
+install the browser extension to automatically save new credentials as you
+sign up and register around the web, and autofill them the next time you
+need them. The server never sees a single unencrypted item — everything is
+encrypted and decrypted in your browser using the Web Crypto API.
 
-- [`apps/api/README.md`](apps/api/README.md)
-- [`apps/web/README.md`](apps/web/README.md)
-- [`apps/extensions/README.md`](apps/extensions/README.md)
+> ⚠️ **Public Beta**: VaultX is functional and the encryption model is solid,
+> but this is an early release. Expect rough edges, and please report bugs —
+> see [Roadmap & Feedback](#roadmap--feedback) below.
 
 ---
 
-## 1. High-Level Architecture
+## Table of Contents
+
+1. [What VaultX Does](#what-vaultx-does)
+2. [Architecture Overview](#architecture-overview)
+3. [The Zero-Knowledge Key Hierarchy](#the-zero-knowledge-key-hierarchy)
+4. [Core Flows](#core-flows)
+5. [Monorepo Structure & Per-App Docs](#monorepo-structure--per-app-docs)
+6. [Feature List](#feature-list)
+7. [Tech Stack](#tech-stack)
+8. [Getting Started](#getting-started)
+9. [Security Model](#security-model)
+10. [Roadmap & Feedback](#roadmap--feedback)
+11. [Contributing](#contributing)
+12. [License](#license)
+
+---
+
+## What VaultX Does
+
+VaultX stores your logins, secure notes, and payment cards — encrypted on
+your device before they're ever sent anywhere. Three pieces work together:
+
+- **Web App** — your vault's home base. Add and manage logins, secure
+  notes, and payment cards; run breach health checks; export/import data;
+  manage account security and recovery.
+- **Browser Extension** — once installed, VaultX works in the background as
+  you browse: it automatically detects and saves new login forms AND card
+  details (number, expiry, CVV) as you enter them, then autofills them the
+  next time you visit. Cards stay behind a separate PIN.
+- **API** — stores only encrypted blobs and keys, manages sessions, sends
+  emails (OTP, recovery key, security notifications), and checks passwords
+  against breach databases without ever seeing them.
+
+---
+
+## Architecture Overview
 
 ```mermaid
 graph TB
     subgraph Clients
-        WEB["Web App<br/>(React + Vite)<br/>localhost:5173"]
-        EXT["Browser Extension<br/>(Chrome MV3)"]
+        WEB["Web App (React + Vite)"]
+        EXT["Browser Extension (Chrome MV3)"]
     end
 
-    subgraph Server["Backend — apps/api (port 5000)"]
-        API[Express API]
+    subgraph Server["API — Express + TypeScript"]
         AUTH[Auth Module]
         VAULT[Vault Module]
         USER[User Module]
+        STATS[Stats Module — public]
     end
 
     subgraph Data
-        PG[("PostgreSQL<br/>Neon")]
-        REDIS[("Redis<br/>Sessions, OTP")]
+        PG[("PostgreSQL — Neon")]
+        REDIS[("Redis — sessions, OTP")]
     end
 
     subgraph External
-        HIBP["Have I Been Pwned<br/>(breach check)"]
-        RESEND["Resend<br/>(emails)"]
+        HIBP["Have I Been Pwned"]
+        RESEND["Resend (email)"]
         GOOGLE["Google OAuth"]
     end
 
-    WEB -- "HTTPS + JWT" --> API
-    EXT -- "HTTPS + JWT" --> API
-    API --> AUTH
-    API --> VAULT
-    API --> USER
+    WEB -- "HTTPS + JWT" --> AUTH
+    WEB --> VAULT
+    WEB --> USER
+    WEB -.->|"public, no auth"| STATS
+    EXT -- "HTTPS + JWT" --> AUTH
+    EXT --> VAULT
+
     AUTH --> PG
     AUTH --> REDIS
     VAULT --> PG
+    STATS --> PG
     AUTH --> HIBP
     AUTH --> RESEND
     AUTH --> GOOGLE
 ```
 
-**Key principle**: the API stores only _encrypted blobs_ for vault data
-(`encrypted_data`, `iv`) and _encrypted keys_ (`vault_key_enc`,
-`recovery_key_enc`). It has no way to read passwords, notes, or card details —
-even with full database access.
+The server is a thin, mostly-dumb storage and coordination layer. All the
+"interesting" logic — encryption, decryption, key derivation, recovery —
+happens client-side.
 
 ---
 
-## 2. The Zero-Knowledge Key Hierarchy
+## The Zero-Knowledge Key Hierarchy
 
-This is the most important concept in the codebase. Three keys exist, each
-derived/encrypted differently:
+Three keys, three jobs:
 
 ```mermaid
 graph TD
-    PW["Master Password<br/>(never sent to server)"]
-    RK["Recovery Key<br/>(random 32 bytes, shown once)"]
-    MK["Master Key<br/>(random 32 bytes, generated at registration)"]
-    VAULT_ITEMS["Vault Items<br/>(logins, notes, cards)"]
+    PW["Master Password<br/>(never transmitted)"]
+    RK["Recovery Key<br/>(random 32 bytes, shown once at registration)"]
+    MK["Master Key<br/>(random 32 bytes, generated once)"]
+    ITEMS["Vault Items<br/>(logins, notes, cards)"]
 
-    PW -- "PBKDF2 (600k iter)<br/>+ kdfSalt" --> DK["Derived Key<br/>(64 bytes: authKey + vaultKey)"]
-    DK -- "vaultKey encrypts" --> MK
-    RK -- "encrypts" --> MK
-    MK -- "encrypts/decrypts" --> VAULT_ITEMS
+    PW -->|"PBKDF2-SHA256<br/>600,000 iterations"| DK["Derived Key (64 bytes)"]
+    DK -->|"vaultKey half<br/>encrypts"| MK
+    RK -->|"encrypts"| MK
+    MK -->|"AES-256-GCM<br/>encrypts/decrypts"| ITEMS
 
-    DK -.->|"vault_key_enc + vault_key_iv<br/>(stored in DB)"| PG1[(DB)]
-    RK -.->|"recovery_key_enc + recovery_key_iv<br/>(stored in DB)"| PG2[(DB)]
+    DK -.->|"authKey half →<br/>Argon2id → auth_hash"| SERVER[("Server-side<br/>verification only")]
 ```
 
-- **Master Key** is the _root secret_. It's generated once at registration and
-  encrypts every vault item directly. It never changes unless an OTP-based
-  reset occurs.
-- **Master Password** never leaves the device. `PBKDF2(password, kdfSalt,
-600000 iterations)` produces 64 bytes, split into `authKey` (sent to server,
-  hashed again with Argon2, used for login verification) and `vaultKey` (stays
-  client-side, decrypts `vault_key_enc` to reveal the Master Key).
-- **Recovery Key** is a second, independent "lock" on the Master Key. It's
-  shown once at registration (downloadable `.txt` + emailed) and lets a user
-  reset their password **without losing vault data** — see the reset flows
-  below.
+| Key                              | Generated                           | Stored where                                                           | Purpose                                                                                               |
+| -------------------------------- | ----------------------------------- | ---------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| Master Password                  | By you, memorized                   | Nowhere                                                                | Unlocks everything                                                                                    |
+| Derived Key (authKey + vaultKey) | PBKDF2 from password + salt         | Never stored                                                           | `authKey` verifies login (hashed again server-side with Argon2id); `vaultKey` decrypts the Master Key |
+| Master Key                       | Random, at registration             | Encrypted twice in DB (`vault_key_enc`, `recovery_key_enc`)            | Directly encrypts every vault item                                                                    |
+| Recovery Key                     | Random, at registration, shown once | Never stored — only its _encrypted form_ (`recovery_key_enc`) is in DB | Lets you reset your password **without losing your vault**                                            |
 
-### Why AES-GCM doubles as verification
-
-AES-GCM includes an authentication tag. If you try to decrypt
-`recovery_key_enc` with the wrong recovery key, `subtle.decrypt()` throws —
-there's no separate "is this key correct" check needed. Wrong key = throw =
-caught and shown as "Invalid recovery key".
+**Why AES-GCM doubles as a correctness check**: AES-GCM includes an
+authentication tag. Decrypting with the wrong key doesn't return garbage — it
+**throws**. So "is this recovery key correct?" is answered by "did the
+decrypt succeed?" — no separate verification step needed.
 
 ---
 
-## 3. Authentication & Reset Flows
+## Core Flows
 
 ### Registration
 
 ```mermaid
 sequenceDiagram
-    participant U as User (browser)
+    participant U as Browser
     participant API as API
     participant DB as PostgreSQL
 
-    U->>U: Generate kdfSalt, authSalt
-    U->>U: deriveKeys(password, kdfSalt) -> authKey, vaultKey
-    U->>U: masterKey = random(32 bytes)
+    U->>U: kdfSalt, authSalt = random
+    U->>U: deriveKeys(password, kdfSalt) → authKey, vaultKey
+    U->>U: masterKey = random(32)
     U->>U: vaultKeyEnc = AES-GCM(masterKey, vaultKey)
-    U->>U: recoveryKey = random(32 bytes)
+    U->>U: recoveryKey = random(32)
     U->>U: recoveryKeyEnc = AES-GCM(masterKey, recoveryKey)
-    U->>API: POST /api/auth/register<br/>{authKey, kdfSalt, vaultKeyEnc, recoveryKeyEnc, recoveryKeyDisplay, ...}
-    API->>API: authHash = Argon2(authKey)
-    API->>DB: INSERT user (auth_hash, kdf_salt, vault_key_enc, recovery_key_enc, ...)
-    API-->>U: accessToken, refreshToken (cookie)
-    U->>U: Download recovery-key .txt file
-    API->>U: Email recovery key (via Resend)
+    U->>API: POST /api/auth/register
+    API->>API: auth_hash = Argon2id(authKey)
+    API->>DB: INSERT users(...)
+    API-->>U: accessToken
+    U->>U: download recovery-key.txt
+    API->>U: email recovery key
 ```
 
 ### Login
 
 ```mermaid
 sequenceDiagram
-    participant U as User
+    participant U as Browser
     participant API as API
 
     U->>API: POST /api/auth/prelogin {email}
     API-->>U: kdfSalt, kdfParams
-    U->>U: deriveKeys(password, kdfSalt) -> authKey, vaultKey
+    U->>U: deriveKeys(password, kdfSalt) → authKey, vaultKey
     U->>API: POST /api/auth/login {authKey}
-    API->>API: verify Argon2(authKey) == auth_hash
+    API->>API: Argon2id.verify(authKey) == auth_hash?
     API-->>U: accessToken, vaultKeyEnc, vaultKeyIv
-    U->>U: masterKey = AES-GCM-Decrypt(vaultKeyEnc, vaultKey)
-    Note over U: masterKey now decrypts all vault items
+    U->>U: masterKey = AES-GCM.decrypt(vaultKeyEnc, vaultKey)
 ```
 
-### Forgot Password — Recovery Key (vault preserved)
+### Forgot Password — two paths
 
 ```mermaid
-sequenceDiagram
-    participant U as User
-    participant API as API
-
-    U->>U: Enter/upload recoveryKey
-    U->>API: GET /api/auth/forgot-password/recovery-data?email=...
-    API-->>U: recovery_key_enc, recovery_key_iv
-    U->>U: masterKey = AES-GCM-Decrypt(recovery_key_enc, recoveryKey)
-    Note over U: throws if recoveryKey wrong -> "Invalid recovery key"
-    U->>U: newKdfSalt, derive newVaultKey from new password
-    U->>U: newVaultKeyEnc = AES-GCM(masterKey, newVaultKey)
-    U->>API: POST /api/auth/forgot-password/recovery-key<br/>{newAuthKey, newKdfSalt, newVaultKeyEnc, ...}
-    API->>API: UPDATE users SET auth_hash, kdf_salt, vault_key_enc...
-    API->>API: DELETE all sessions
-    Note over U: masterKey unchanged -> vault items still decrypt
+flowchart TD
+    A[Forgot password] --> B{Have your<br/>recovery key?}
+    B -->|Yes| C["Decrypt recovery_key_enc<br/>with recovery key → masterKey"]
+    C --> D["Re-encrypt masterKey<br/>with NEW password"]
+    D --> E["✅ Vault items still decrypt —<br/>same masterKey"]
+    B -->|No| F["Verify email OTP"]
+    F --> G["Generate NEW masterKey"]
+    G --> H["⚠️ Old vault items become<br/>unreadable — zero-knowledge,<br/>can't migrate without old key"]
 ```
 
-### Forgot Password — Email OTP (vault cleared)
+### Extension Re-Unlock (browser restart)
 
-Same shape, but `masterKey` is **regenerated** (new random 32 bytes) instead
-of recovered. Old vault items, encrypted with the old masterKey, become
-permanently unreadable — by design (zero-knowledge means the server can't
-"migrate" them without the old key).
+```mermaid
+flowchart LR
+    A[Browser closes] --> B["chrome.storage.session cleared<br/>(masterKey lost)"]
+    B --> C["chrome.storage.local persists<br/>(accessToken survives)"]
+    C --> D[Browser reopens]
+    D --> E["CHECK_SESSION → needsUnlock: true"]
+    E --> F["Popup shows: 'Signed in as ...'<br/>+ master password field"]
+    F --> G["Fetch fresh kdfSalt + vault_key_enc<br/>via /prelogin + /user/profile"]
+    G --> H["Re-derive masterKey →<br/>full session restored"]
+```
 
 ---
 
-## 4. Monorepo Structure
+## Monorepo Structure & Per-App Docs
 
 ```
 pm/
 ├── apps/
-│   ├── api/                  # Express backend
-│   │   ├── src/
-│   │   │   ├── modules/
-│   │   │   │   ├── auth/      # register, login, OAuth, password reset
-│   │   │   │   ├── vault/      # vault items CRUD, sharing
-│   │   │   │   ├── user/       # profile
-│   │   │   │   └── share/      # one-time share links
-│   │   │   ├── db/
-│   │   │   │   ├── migrations/ # Knex migrations
-│   │   │   │   ├── pool.ts      # PostgreSQL pool
-│   │   │   │   └── redis.ts
-│   │   │   ├── middleware/      # auth, rate limiting, HIBP check
-│   │   │   ├── utils/            # jwt, hash, mailer, emailTemplates
-│   │   │   └── index.ts
-│   │   └── README.md
-│   │
-│   ├── web/                   # React web app
-│   │   ├── src/
-│   │   │   ├── pages/           # Login, Register, Dashboard, Settings, etc.
-│   │   │   ├── components/       # VaultItemCard, modals
-│   │   │   ├── lib/                # crypto.ts, kdf.ts, api.ts, storage.ts
-│   │   │   └── store/              # Zustand state (useVaultStore)
-│   │   └── README.md
-│   │
-│   └── extensions/             # Chrome/Edge extension (MV3)
-│       ├── src/
-│       │   ├── background/        # service-worker.ts (message router)
-│       │   ├── content/             # content-script.ts (form capture/autofill)
-│       │   ├── popup/                # Login, Vault, VaultItem, CardPinGate
-│       │   └── lib/                   # crypto, kdf, api, message
-│       └── README.md
-│
-├── README.md
+│   ├── api/           → see apps/api/README.md
+│   ├── web/            → see apps/web/README.md
+│   └── extensions/      → see apps/extensions/README.md
+├── README.md             (this file)
 └── CONTRIBUTING.md
 ```
 
----
-
-## 5. Tech Stack Summary
-
-| Layer                 | Choice                          | Why                                                           |
-| --------------------- | ------------------------------- | ------------------------------------------------------------- |
-| Backend framework     | Express + TypeScript            | Simple, well-understood, fast to iterate                      |
-| Database              | PostgreSQL (Neon)               | Serverless Postgres, branching, generous free tier            |
-| Cache/sessions        | Redis                           | Session storage, OTP codes, rate-limit counters               |
-| Auth tokens           | JWT (access + refresh)          | Stateless access tokens, rotated refresh tokens in DB         |
-| Password hashing      | Argon2id                        | Server-side hash of client-derived authKey (defense-in-depth) |
-| Client key derivation | PBKDF2-SHA256, 600k iterations  | Web Crypto native, no WASM dependency                         |
-| Encryption            | AES-256-GCM                     | Authenticated encryption, built into Web Crypto               |
-| Frontend              | React 18 + Vite + Tailwind      | Fast dev loop, small bundle                                   |
-| Extension             | Chrome MV3 (service worker)     | Required for current Chrome Web Store submissions             |
-| Email                 | Resend                          | Simple API, good deliverability                               |
-| Breach checking       | Have I Been Pwned (k-anonymity) | Passwords never leave the device                              |
+| App                                 | Docs                                                                                                     |
+| ----------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| **API** (Express, Postgres, Redis)  | [`apps/api/README.md`](apps/api/README.md) — endpoint reference, schema, env vars                        |
+| **Web App** (React, Vite, Tailwind) | [`apps/web/README.md`](apps/web/README.md) — pages, crypto reference, session model                      |
+| **Browser Extension** (Chrome MV3)  | [`apps/extensions/README.md`](apps/extensions/README.md) — message architecture, content script behavior |
 
 ---
 
-## 6. Local Development Quick Start
+## Feature List
+
+### Vault
+
+- Logins, secure notes, payment cards
+- Custom fields on any item
+- Favorites, categories, search/filter
+- CSV import (Chrome, Firefox, Bitwarden, 1Password, LastPass formats)
+- Encrypted JSON export/backup
+- One-time share links
+
+### Security
+
+- AES-256-GCM client-side encryption
+- PBKDF2-SHA256, 600,000 iterations
+- Argon2id server-side hash (defense in depth)
+- Recovery key (vault-preserving password reset)
+- Email OTP for sensitive actions (password change, card PIN reset)
+- Vault Health dashboard — breach (HIBP k-anonymity), weak, reused, old
+  password detection
+- Built-in TOTP (2FA code generation) for saved accounts
+- Session management — view & revoke active sessions
+- PIN-protected payment cards (separate from master password)
+
+### Auth
+
+- Email + master password
+- Google OAuth (web)
+- Password change (OTP-gated, re-encrypts vault key only — vault data
+  untouched)
+
+### Browser Extension
+
+- Autofill suggestions on matching sites
+- Automatic credential capture on form submit (with failed-login detection)
+- Pending-save banner with 10-minute window
+- Re-unlock after browser restart (no full re-login)
+- Card PIN gate with 5-minute auto-relock
+
+### Beta
+
+- Public landing page with live, anonymized vault statistics
+- Beta badge across the app
+
+---
+
+## Tech Stack
+
+| Layer     | Choice                                       |
+| --------- | -------------------------------------------- |
+| Backend   | Node.js, Express, TypeScript                 |
+| Database  | PostgreSQL (Neon), Knex (migrations only)    |
+| Cache     | Redis                                        |
+| Frontend  | React 18, Vite, TypeScript, Tailwind CSS     |
+| State     | Zustand (in-memory session state)            |
+| Extension | Chrome MV3, service worker + content scripts |
+| Auth      | JWT (access + rotating refresh), Argon2id    |
+| Crypto    | Web Crypto API — AES-256-GCM, PBKDF2-SHA256  |
+| Email     | Resend                                       |
+| Breach DB | Have I Been Pwned (k-anonymity range API)    |
+
+---
+
+## Getting Started
 
 ```bash
-# 1. Install dependencies (run from repo root — npm workspaces)
+git clone https://github.com/jayesh-thar/vaultx.git
+cd vaultx
 npm install
 
-# 2. Set up environment variables (see each app's README for required vars)
+# Configure environment — see apps/api/README.md and apps/web/README.md
 cp apps/api/.env.example apps/api/.env
 cp apps/web/.env.example apps/web/.env
 
-# 3. Run migrations
 cd apps/api && npm run migrate
 
-# 4. Start everything (3 terminals)
-cd apps/api && npm run dev      # http://localhost:5000
-cd apps/web && npm run dev      # http://localhost:5173
-cd apps/extensions && npm run dev  # then load dist/ as unpacked extension
+# 3 terminals:
+cd apps/api && npm run dev          # http://localhost:5000
+cd apps/web && npm run dev          # http://localhost:5173
+cd apps/extensions && npm run build # then load dist/ via chrome://extensions
 ```
 
 ---
 
-## 7. Security Notes
+## Security Model
 
-- **Zero-knowledge**: server stores only ciphertext + encrypted keys. Master
-  password and Master Key never transit the network.
-- **Defense in depth**: client sends `authKey` (derived via PBKDF2), server
-  hashes it again with Argon2id before storing — so even a DB leak doesn't
-  expose anything usable for offline cracking of the original password.
-- **Session security**: refresh tokens are rotated on every use; reuse of an
-  old refresh token triggers a "kill all sessions" response (token-theft
-  protection).
-- **Rate limiting**: login, registration, and refresh endpoints are rate
-  limited.
-- **HIBP checks**: passwords are checked against Have I Been Pwned using
-  k-anonymity (only first 5 chars of SHA-1 hash sent).
+- **Zero-knowledge**: the server stores only ciphertext (`encrypted_data`,
+  `iv`) and doubly-encrypted keys (`vault_key_enc`, `recovery_key_enc`). It
+  cannot decrypt vault contents under any circumstance — not with database
+  access, not with source code access.
+- **Defense in depth**: the client-derived `authKey` is hashed again with
+  Argon2id before storage, so a database leak alone doesn't give an attacker
+  anything directly crackable against the original password.
+- **Refresh token rotation**: reuse of a stale refresh token (a sign of
+  token theft) immediately invalidates **all** sessions for that user.
+- **Rate limiting** on login, registration, and refresh endpoints.
+- **HIBP breach checks** use k-anonymity — only the first 5 hex characters of
+  a SHA-1 hash are ever sent, so HIBP never sees your actual password.
+
+---
+
+## Roadmap & Feedback
+
+VaultX is under active development. Planned next:
+
+- 🖥️ **Desktop app** (Tauri/Electron) — same zero-knowledge vault, native
+  experience, offline-first with background sync
+- 🐛 **In-app bug & feature report form** — submit feedback without leaving
+  VaultX (coming soon)
+- 📱 Mobile app
+- 🔄 Cross-device sync improvements / conflict resolution
+- 🌐 Firefox extension support
+- 🏢 Shared vaults / team folders
+
+Found a bug or have a suggestion **right now**? Please
+[open an issue on GitHub](https://github.com/jayesh-thar/vaultx/issues) —
+beta feedback directly shapes what gets built next.
+
+---
+
+## Contributing
+
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for setup, workflow, code style, and
+the manual test checklist (no automated test suite yet — contributions
+welcome here too!).
+
+---
+
+## License
+
+MIT — see `LICENSE`.
+
+---
+
+<p align="center">Built with care for privacy. 🔐</p>
