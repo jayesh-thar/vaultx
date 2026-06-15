@@ -2,9 +2,9 @@ import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import type { AxiosError } from 'axios';
 import api from '../lib/api';
-import { deriveKeys } from '../lib/kdf';
+import { deriveKeys, toHex } from '../lib/kdf';
 import { decryptBytes } from '../lib/crypto';
-import { loadSession } from '../lib/storage';
+import { loadSession, saveSession } from '../lib/storage';
 import { useVaultStore } from '../store/useVaultStore';
 
 export default function Unlock() {
@@ -29,7 +29,7 @@ export default function Unlock() {
     setLoading(true);
     try {
       // Derive vault key from password + stored salt
-      const { vaultKey: derivedKey } = await deriveKeys(
+      const { authKey, vaultKey: derivedKey } = await deriveKeys(
         password,
         session!.kdfSalt,
         session!.kdfParams
@@ -41,22 +41,40 @@ export default function Unlock() {
         derivedKey
       );
 
-      // Refresh access token using httpOnly cookie
-      const { data } = await api.post<{ accessToken: string }>(
-        '/api/auth/refresh'
-      );
-
-      setAuth(session!.userId, data.accessToken);
-      setVaultKey(masterKey);
-      navigate('/dashboard');
-    } catch (err) {
-      const e = err as AxiosError;
-      if (e.response?.status === 401) {
-        setError('Session expired. Please log in again.');
-        navigate('/login');
-      } else {
-        setError('Incorrect password. Please try again.');
+      // Fast path — try refreshing the existing session via httpOnly cookie
+      try {
+        const { data } = await api.post<{ accessToken: string }>(
+          '/api/auth/refresh'
+        );
+        setAuth(session!.userId, data.accessToken);
+        setVaultKey(masterKey);
+        navigate('/dashboard');
+        return;
+      } catch {
+        // Refresh token expired/missing — fall back to a full silent login
+        // using the password just entered. No need to send the user back
+        // to the email+password screen.
       }
+
+      const { data: loginData } = await api.post('/api/auth/login', {
+        email: session!.email,
+        authKey: toHex(authKey),
+      });
+
+      setAuth(loginData.userId, loginData.accessToken);
+      setVaultKey(masterKey);
+      saveSession({
+        email: session!.email,
+        userId: loginData.userId,
+        kdfSalt: session!.kdfSalt,
+        kdfParams: session!.kdfParams,
+        vaultKeyEnc: loginData.vaultKeyEnc,
+        vaultKeyIv: loginData.vaultKeyIv,
+      });
+      navigate('/dashboard');
+    } catch {
+      // Either decrypt failed (wrong password) or login 401'd (wrong password)
+      setError('Incorrect password. Please try again.');
     } finally {
       setLoading(false);
     }

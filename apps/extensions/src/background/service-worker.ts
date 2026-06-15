@@ -143,6 +143,10 @@ async function handleMessage(msg: ExtensionMessage): Promise<unknown> {
       return { success: true };
     case MSG.REUNLOCK:
       return handleReunlock(msg.payload);
+    case MSG.ADD_VAULT_ITEM:
+      return handleAddVaultItem((msg as any).payload);
+    case MSG.DELETE_VAULT_ITEM:
+      return handleDeleteVaultItem((msg as any).payload);
     default:
       return { success: false, error: 'Unknown message type' };
   }
@@ -402,6 +406,62 @@ async function handleSaveCredentials(payload: {
   }
 }
 
+async function handleAddVaultItem(payload: {
+  type: 'login' | 'note' | 'card';
+  payload: Record<string, unknown>;
+}): Promise<{ success: boolean; id?: string; error?: string }> {
+  const session = await getSession();
+  if (!session) return { success: false, error: 'Not logged in' };
+  try {
+    const masterKey = new Uint8Array(
+      session.masterKey
+    ) as Uint8Array<ArrayBuffer>;
+    const category = payload.payload.category as string | undefined;
+    const body: Record<string, unknown> = JSON.parse(
+      JSON.stringify(payload.payload)
+    );
+    delete body.category;
+
+    const { ciphertext, iv } = await encrypt(JSON.stringify(body), masterKey);
+
+    const reqBody: Record<string, unknown> = {
+      type: payload.type,
+      encryptedData: ciphertext,
+      iv,
+    };
+    if (category) reqBody.category = category;
+
+    const res = await apiRequest<{ id?: string }>('/api/vault/items', {
+      method: 'POST',
+      token: session.accessToken,
+      body: reqBody,
+    });
+
+    return { success: true, id: res?.id };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Failed to save',
+    };
+  }
+}
+
+async function handleDeleteVaultItem(payload: {
+  id: string;
+}): Promise<{ success: boolean }> {
+  const session = await getSession();
+  if (!session) return { success: false };
+  try {
+    await apiRequest(`/api/vault/items/${payload.id}`, {
+      method: 'DELETE',
+      token: session.accessToken,
+    });
+    return { success: true };
+  } catch {
+    return { success: false };
+  }
+}
+
 async function handleCheckCardPinExists(): Promise<CheckCardPinExistsResponse> {
   const session = await getSession();
   if (!session) return { exists: false };
@@ -481,10 +541,10 @@ async function handleSaveFormFields(payload: {
   if (!session) return { saved: false, autoSave: false };
 
   const prefs = await chrome.storage.local.get('vaultx_autosave');
-  const autoSave = prefs.vaultx_autosave === true;
+  const autoSave = prefs.vaultx_autosave !== false; // default ON
 
   if (!autoSave && !payload.forceSave) {
-    return { saved: false, autoSave: false };
+    return { saved: false, autoSave };
   }
 
   try {
@@ -513,6 +573,10 @@ async function handleSaveFormFields(payload: {
       'zipCode',
       'country',
       'birthdate',
+      'cardholder',
+      'cardNumber',
+      'expiry',
+      'cvv',
     ];
 
     for (const field of payload.fields) {
@@ -529,30 +593,54 @@ async function handleSaveFormFields(payload: {
       }
     }
 
-    const itemPayload = {
-      title: payload.title || payload.domain,
-      url: payload.url,
-      username: standard.username || standard.email || '',
-      email: standard.email || '',
-      password: standard.password || '',
-      notes: '',
-      favorite: false,
-      passwordChangedAt: new Date().toISOString(),
-      customFields: customFields.length > 0 ? customFields : undefined,
-    };
+    const isCardForm = !!standard.cardNumber && !standard.password;
+
+    let itemPayload: Record<string, unknown>;
+    let itemType: 'login' | 'card';
+
+    if (isCardForm) {
+      itemType = 'card';
+      itemPayload = {
+        title: payload.title || `Card — ${payload.domain}`,
+        cardholder: standard.cardholder || '',
+        number: standard.cardNumber || '',
+        expiry: standard.expiry || '',
+        cvv: standard.cvv || '',
+        notes: '',
+        favorite: false,
+      };
+    } else {
+      itemType = 'login';
+      itemPayload = {
+        title: payload.title || payload.domain,
+        url: payload.url,
+        username: standard.username || standard.email || '',
+        email: standard.email || '',
+        password: standard.password || '',
+        notes: '',
+        favorite: false,
+        passwordChangedAt: new Date().toISOString(),
+        customFields: customFields.length > 0 ? customFields : undefined,
+      };
+    }
 
     const { ciphertext, iv } = await encrypt(
       JSON.stringify(itemPayload),
       masterKey
     );
 
-    await apiRequest('/api/vault/items', {
+    const res = await apiRequest<{ id?: string }>('/api/vault/items', {
       method: 'POST',
       token: session.accessToken,
-      body: { type: 'login', encryptedData: ciphertext, iv },
+      body: { type: itemType, encryptedData: ciphertext, iv },
     });
 
-    return { saved: true, autoSave };
+    return {
+      saved: true,
+      autoSave,
+      id: res?.id,
+      title: (itemPayload as { title?: string }).title,
+    };
   } catch (err) {
     console.error('[VaultX SW] Save form error:', err);
     return { saved: false, autoSave: false };

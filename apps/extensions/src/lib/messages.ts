@@ -19,6 +19,8 @@ export const MSG = {
   CLEAR_PENDING_CREDENTIAL: 'CLEAR_PENDING_CREDENTIAL',
   SAVE_PENDING_CREDENTIAL: 'SAVE_PENDING_CREDENTIAL',
   REUNLOCK: 'REUNLOCK',
+  ADD_VAULT_ITEM: 'ADD_VAULT_ITEM',
+  DELETE_VAULT_ITEM: 'DELETE_VAULT_ITEM',
 } as const;
 
 // ── Request shapes ─────────────────────────────────────────────────────────
@@ -94,6 +96,26 @@ export interface SavePendingCredentialRequest {
   };
 }
 
+export interface AddVaultItemRequest {
+  type: typeof MSG.ADD_VAULT_ITEM;
+  payload: {
+    type: 'login' | 'note' | 'card';
+    payload: Record<string, unknown>;
+  };
+}
+export interface DeleteVaultItemRequest {
+  type: typeof MSG.DELETE_VAULT_ITEM;
+  payload: { id: string };
+}
+export interface AddVaultItemResponse {
+  success: boolean;
+  id?: string;
+  error?: string;
+}
+export interface DeleteVaultItemResponse {
+  success: boolean;
+}
+
 // ── Union — ALL messages must be here ──────────────────────────────────────
 export type ExtensionMessage =
   | CheckSessionRequest
@@ -112,7 +134,9 @@ export type ExtensionMessage =
   | GetPendingCredentialRequest
   | ClearPendingCredentialRequest
   | SavePendingCredentialRequest
-  | ReunlockRequest;
+  | ReunlockRequest
+  | AddVaultItemRequest
+  | DeleteVaultItemRequest;
 
 // ── Response shapes ────────────────────────────────────────────────────────
 export interface CheckSessionResponse {

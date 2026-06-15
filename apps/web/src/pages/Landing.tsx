@@ -88,6 +88,134 @@ const FEATURES = [
   },
 ];
 
+const FAQS = [
+  {
+    q: 'Can VaultX employees see my passwords?',
+    simple:
+      "No. Everything is locked with a secret only you know before it ever leaves your device. We just store the locked box — we don't have the key.",
+    technical:
+      'All data is encrypted client-side with AES-256-GCM using a key derived via PBKDF2 (600,000 iterations) from your master password. The server only ever receives ciphertext and never sees your password or derived keys.',
+  },
+  {
+    q: 'What happens if I forget my master password?',
+    simple:
+      "If you saved your recovery key (we give you one when you sign up), you can reset your password and keep everything. Without it, resetting clears your vault — that's the tradeoff for true privacy.",
+    technical:
+      'A random 32-byte recovery key is generated at registration and used to separately encrypt your Master Key (recovery_key_enc). Resetting via recovery key decrypts and re-wraps the same Master Key with a new password-derived key — vault items remain decryptable. The OTP-based reset instead generates a NEW Master Key, making old items permanently undecryptable by design.',
+  },
+  {
+    q: 'Is the browser extension safe to install?',
+    simple:
+      'Yes — it only activates on pages with login or payment forms, and all the encryption happens locally before anything is sent to our servers.',
+    technical:
+      'The extension uses Manifest V3 with a service worker for message routing. The master key lives only in chrome.storage.session (cleared on browser close); chrome.storage.local only persists an access token for re-unlock. Content scripts run on all pages except an excluded list, and only read form field values, never page content unrelated to forms.',
+  },
+  {
+    q: 'What if VaultX shuts down — do I lose my data?',
+    simple:
+      'You can export an encrypted backup of your entire vault at any time from Settings, so your data is never locked into one service.',
+    technical:
+      "The Data tab in Settings exports all vault_items as a JSON file containing the encrypted_data/iv blobs as-is. Since decryption only requires your master password (client-side), this export remains fully restorable independent of VaultX's infrastructure.",
+  },
+];
+
+function FaqItem({
+  q,
+  simple,
+  technical,
+}: {
+  q: string;
+  simple: string;
+  technical: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [mode, setMode] = useState<'simple' | 'technical'>('simple');
+
+  return (
+    <div
+      className="rounded-xl overflow-hidden"
+      style={{
+        background: 'var(--bg-surface)',
+        border: '0.5px solid var(--border)',
+      }}
+    >
+      <button
+        className="w-full flex items-center justify-between px-4 py-3 text-left"
+        onClick={() => setOpen((p) => !p)}
+      >
+        <span
+          className="text-sm font-medium"
+          style={{ color: 'var(--text-primary)' }}
+        >
+          {q}
+        </span>
+        <span style={{ color: 'var(--text-muted)' }}>{open ? '−' : '+'}</span>
+      </button>
+      {open && (
+        <div className="px-4 pb-4">
+          <div className="flex gap-2 mb-2">
+            <button
+              onClick={() => setMode('simple')}
+              className="text-xs px-2 py-1 rounded-md"
+              style={{
+                background:
+                  mode === 'simple' ? 'var(--accent-subtle)' : 'transparent',
+                color:
+                  mode === 'simple' ? 'var(--accent)' : 'var(--text-muted)',
+                border: '0.5px solid var(--border)',
+              }}
+            >
+              Simple
+            </button>
+            <button
+              onClick={() => setMode('technical')}
+              className="text-xs px-2 py-1 rounded-md"
+              style={{
+                background:
+                  mode === 'technical' ? 'var(--accent-subtle)' : 'transparent',
+                color:
+                  mode === 'technical' ? 'var(--accent)' : 'var(--text-muted)',
+                border: '0.5px solid var(--border)',
+              }}
+            >
+              Technical
+            </button>
+          </div>
+          <p
+            className="text-sm leading-relaxed"
+            style={{ color: 'var(--text-secondary)' }}
+          >
+            {mode === 'simple' ? simple : technical}
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const ROADMAP = [
+  {
+    icon: '🖥️',
+    title: 'Desktop App',
+    desc: 'Native offline-first app for Windows/Mac/Linux with the same zero-knowledge vault.',
+  },
+  {
+    icon: '🐛',
+    title: 'In-App Feedback Form',
+    desc: 'Submit bugs and feature ideas directly from VaultX — coming soon.',
+  },
+  {
+    icon: '📱',
+    title: 'Mobile App',
+    desc: 'iOS and Android apps with biometric unlock.',
+  },
+  {
+    icon: '🌐',
+    title: 'Firefox Extension',
+    desc: 'Bringing autofill and capture to Firefox users.',
+  },
+];
+
 export default function Landing() {
   const navigate = useNavigate();
   const [stats, setStats] = useState<Stats | null>(null);
@@ -337,6 +465,83 @@ export default function Landing() {
             </p>
           </div>
         </div>
+      </section>
+
+      {/* FAQ */}
+      <section className="max-w-3xl mx-auto px-6 pb-20">
+        <h2
+          className="text-2xl font-semibold text-center mb-8"
+          style={{ color: 'var(--text-primary)' }}
+        >
+          Common questions
+        </h2>
+        <div className="flex flex-col gap-3">
+          {FAQS.map((faq) => (
+            <FaqItem
+              key={faq.q}
+              q={faq.q}
+              simple={faq.simple}
+              technical={faq.technical}
+            />
+          ))}
+        </div>
+      </section>
+
+      {/* Roadmap */}
+      <section className="max-w-4xl mx-auto px-6 pb-20">
+        <h2
+          className="text-2xl font-semibold text-center mb-2"
+          style={{ color: 'var(--text-primary)' }}
+        >
+          What's next
+        </h2>
+        <p
+          className="text-sm text-center mb-8"
+          style={{ color: 'var(--text-muted)' }}
+        >
+          VaultX is actively evolving during beta. Here's what's coming:
+        </p>
+        <div className="grid sm:grid-cols-2 gap-3">
+          {ROADMAP.map((r) => (
+            <div
+              key={r.title}
+              className="rounded-xl p-4 flex items-start gap-3"
+              style={{
+                background: 'var(--bg-surface)',
+                border: '0.5px solid var(--border)',
+              }}
+            >
+              <span className="text-xl">{r.icon}</span>
+              <div>
+                <p
+                  className="text-sm font-semibold"
+                  style={{ color: 'var(--text-primary)' }}
+                >
+                  {r.title}
+                </p>
+                <p
+                  className="text-xs mt-0.5"
+                  style={{ color: 'var(--text-muted)' }}
+                >
+                  {r.desc}
+                </p>
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* Fun decorative lock animation */}
+      <section className="max-w-3xl mx-auto px-6 pb-16 flex justify-center gap-6">
+        {['🔐', '🔑', '🛡️', '🔒'].map((emoji, i) => (
+          <span
+            key={emoji}
+            className="text-3xl animate-bounce"
+            style={{ animationDelay: `${i * 0.15}s`, opacity: 0.6 }}
+          >
+            {emoji}
+          </span>
+        ))}
       </section>
 
       {/* Footer */}

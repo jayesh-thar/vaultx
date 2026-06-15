@@ -7,17 +7,28 @@ export interface StoredSession {
   kdfParams: KdfParams;
   vaultKeyEnc: string;
   vaultKeyIv: string;
+  loginAt?: number;
 }
 
 const SESSION_KEY = 'vx_session';
+const SESSION_MAX_AGE_MS = 24 * 60 * 60 * 1000; // 1 day
 
 export function saveSession(data: StoredSession): void {
-  localStorage.setItem(SESSION_KEY, JSON.stringify(data));
+  localStorage.setItem(
+    SESSION_KEY,
+    JSON.stringify({ ...data, loginAt: Date.now() })
+  );
 }
 
 export function loadSession(): StoredSession | null {
   const raw = localStorage.getItem(SESSION_KEY);
-  return raw ? (JSON.parse(raw) as StoredSession) : null;
+  if (!raw) return null;
+  const session = JSON.parse(raw) as StoredSession;
+  if (session.loginAt && Date.now() - session.loginAt > SESSION_MAX_AGE_MS) {
+    localStorage.removeItem(SESSION_KEY);
+    return null;
+  }
+  return session;
 }
 
 export function clearStoredSession(): void {

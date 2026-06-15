@@ -86,10 +86,15 @@ async function checkPendingCaptureOnLoad() {
       title: pending.title,
       url: pending.url,
     },
-  })) as { saved: boolean; autoSave: boolean } | null;
+  })) as {
+    saved: boolean;
+    autoSave: boolean;
+    id?: string;
+    title?: string;
+  } | null;
 
   if (response?.saved) {
-    showSaveToast('✓ Saved to VaultX');
+    showAutoSaveToast(response.id, response.title || pending.title);
   } else if (response && !response.autoSave) {
     showSaveBanner(pending.fields, pending.domain, pending.title);
   }
@@ -132,10 +137,16 @@ function mapFieldToVaultKey(input: HTMLInputElement): string {
   const type = input.type.toLowerCase();
   const id = (input.id ?? '').toLowerCase();
   const placeholder = (input.placeholder ?? '').toLowerCase();
-  const combined = `${name} ${id} ${placeholder}`;
+  const autocomplete = (input.autocomplete ?? '').toLowerCase();
+  const combined = `${name} ${id} ${placeholder} ${autocomplete}`;
 
   if (type === 'email' || combined.includes('email')) return 'email';
   if (type === 'password') return 'password';
+  if (
+    combined.includes('cardholder') ||
+    (combined.includes('card') && combined.includes('name'))
+  )
+    return 'cardholder';
   if (combined.includes('username') || combined.includes('user_name'))
     return 'username';
   if (combined.includes('first') && combined.includes('name'))
@@ -171,6 +182,28 @@ function findPasswordInput(): HTMLInputElement | null {
   return document.querySelector<HTMLInputElement>(
     'input[type="password"]:not([style*="display: none"])'
   );
+}
+
+function findCardNumberInput(): HTMLInputElement | null {
+  const inputs = Array.from(
+    document.querySelectorAll<HTMLInputElement>('input')
+  );
+  for (const input of inputs) {
+    const combined =
+      `${input.name} ${input.id} ${input.placeholder} ${input.autocomplete}`.toLowerCase();
+    if (
+      combined.includes('cardnumber') ||
+      combined.includes('card-number') ||
+      combined.includes('cc-number') ||
+      combined.includes('cc-num') ||
+      (combined.includes('card') && combined.includes('number'))
+    ) {
+      const style = window.getComputedStyle(input);
+      if (style.display !== 'none' && style.visibility !== 'hidden')
+        return input;
+    }
+  }
+  return null;
 }
 
 // ── Capture all visible filled inputs ─────────────────────────────────────
@@ -239,6 +272,46 @@ function showSaveToast(message: string) {
   `;
   toast.textContent = message;
   document.body.appendChild(toast);
+  setTimeout(() => toast.remove(), 3000);
+}
+
+function showAutoSaveToast(itemId: string | undefined, title: string) {
+  document.getElementById('vaultx-toast')?.remove();
+  const toast = document.createElement('div');
+  toast.id = 'vaultx-toast';
+  toast.style.cssText = `
+    position:fixed;bottom:20px;right:20px;
+    background:#10b981;color:#fff;
+    padding:10px 14px;border-radius:8px;
+    font-size:13px;font-family:-apple-system,sans-serif;font-weight:600;
+    z-index:2147483647;box-shadow:0 4px 16px rgba(16,185,129,0.4);
+    display:flex;align-items:center;gap:10px;
+  `;
+  toast.innerHTML = `<span>✓ Saved "${escapeHtml(title.slice(0, 24))}"</span>${
+    itemId
+      ? '<button id="vx-undo" style="background:rgba(255,255,255,0.2);border:none;color:#fff;border-radius:6px;padding:4px 8px;font-size:12px;cursor:pointer;font-weight:600;">Cancel</button>'
+      : ''
+  }`;
+  document.body.appendChild(toast);
+
+  if (itemId) {
+    document.getElementById('vx-undo')?.addEventListener('click', async () => {
+      await chrome.runtime.sendMessage({
+        type: 'DELETE_VAULT_ITEM',
+        payload: { id: itemId },
+      });
+      await chrome.storage.session.remove('lastAutoSavedItem');
+      toast.remove();
+    });
+    chrome.storage.session.set({
+      lastAutoSavedItem: {
+        id: itemId,
+        title,
+        expiresAt: Date.now() + 5 * 60 * 1000,
+      },
+    });
+  }
+
   setTimeout(() => toast.remove(), 3000);
 }
 
@@ -312,24 +385,24 @@ function showSaveBanner(
     ?.addEventListener('click', async () => {
       banner.remove();
 
-      // Wake up service worker first
       try {
         await chrome.runtime.sendMessage({ type: 'CHECK_SESSION' });
       } catch {
         /* ignore */
       }
 
-      // Small delay for SW to wake up
       await new Promise((r) => setTimeout(r, 200));
 
       const res = (await chrome.runtime.sendMessage({
         type: 'SAVE_FORM_FIELDS',
         payload: { ...pendingPayload, forceSave: true },
-      })) as { saved: boolean } | null;
+      })) as { saved: boolean; id?: string; title?: string } | null;
 
-      showSaveToast(
-        res?.saved ? '✓ Saved to VaultX' : '✗ Not logged in to VaultX'
-      );
+      if (res?.saved) {
+        showAutoSaveToast(res.id, res.title || title);
+      } else {
+        showSaveToast('✗ Not logged in to VaultX');
+      }
     });
 
   // Auto-dismiss after 15 seconds — save to pending
@@ -442,9 +515,13 @@ function setupFormSubmitCapture() {
 
   formSubmitHandler = async (_e: Event) => {
     const passwordInput = findPasswordInput();
-    if (!passwordInput || !passwordInput.value.trim()) return;
+    const cardInput = findCardNumberInput();
 
-    const capturedPassword = passwordInput.value;
+    const hasPassword = !!passwordInput?.value.trim();
+    const hasCard = !!cardInput?.value.trim();
+    if (!hasPassword && !hasCard) return;
+
+    const capturedValue = (passwordInput ?? cardInput)!.value;
     const fields = findAllFormInputs();
     if (fields.length < 2) return;
 
@@ -452,12 +529,12 @@ function setupFormSubmitCapture() {
 
     await new Promise((r) => setTimeout(r, 1200));
 
-    // If the SAME password field still has the SAME value and the page
-    // hasn't navigated — the submit almost certainly failed (validation
-    // error, wrong password, etc.) and nothing actually happened.
-    const stillThere = findPasswordInput();
+    // Re-check whichever field we originally captured (password OR card number)
+    const stillThere = hasPassword
+      ? findPasswordInput()
+      : findCardNumberInput();
     const sameUrl = window.location.href === submittedUrl;
-    const sameValue = stillThere?.value === capturedPassword;
+    const sameValue = stillThere?.value === capturedValue;
 
     if (sameUrl && stillThere && sameValue) {
       console.log(
@@ -482,10 +559,15 @@ function setupFormSubmitCapture() {
     const response = (await chrome.runtime.sendMessage({
       type: 'SAVE_FORM_FIELDS',
       payload: { fields, domain, title, url: window.location.href },
-    })) as { saved: boolean; autoSave: boolean } | null;
+    })) as {
+      saved: boolean;
+      autoSave: boolean;
+      id?: string;
+      title?: string;
+    } | null;
 
     if (response?.saved) {
-      showSaveToast('✓ Saved to VaultX');
+      showAutoSaveToast(response.id, response.title || title);
     } else if (response && !response.autoSave) {
       showSaveBanner(fields, domain, title);
     }

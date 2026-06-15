@@ -6,11 +6,13 @@ import type {
 } from '../../lib/messages';
 import type { DecryptedItem } from '../../types';
 import VaultItem from '../components/VaultItem';
+import AddItemModal from '../components/AddItemModal';
 
 interface Props {
   onLogout: () => void;
 }
 type Filter = 'all' | 'login' | 'note' | 'card';
+type ItemTypeChoice = 'login' | 'note' | 'card';
 
 export default function Vault({ onLogout }: Props) {
   const [items, setItems] = useState<DecryptedItem[]>([]);
@@ -24,11 +26,18 @@ export default function Vault({ onLogout }: Props) {
   const profileRef = useRef<HTMLDivElement>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [autoSave, setAutoSave] = useState(false);
+  const [showAddModal, setShowAddModal] = useState<ItemTypeChoice | null>(null);
+  const [showTypePicker, setShowTypePicker] = useState(false);
   const [pendingCred, setPendingCred] = useState<{
     title: string;
     domain: string;
     url: string;
     fields: Array<{ name: string; type: string; value: string; label: string }>;
+    expiresAt: number;
+  } | null>(null);
+  const [recentSave, setRecentSave] = useState<{
+    id: string;
+    title: string;
     expiresAt: number;
   } | null>(null);
 
@@ -41,7 +50,7 @@ export default function Vault({ onLogout }: Props) {
       });
     // Load auto-save preference
     chrome.storage.local.get('vaultx_autosave').then((r) => {
-      setAutoSave(r.vaultx_autosave === true);
+      setAutoSave(r.vaultx_autosave !== false);
     });
 
     // Check for pending credential
@@ -323,6 +332,71 @@ export default function Vault({ onLogout }: Props) {
           </button>
         ))}
       </div>
+
+      <div style={{ padding: '0 14px 8px', position: 'relative' }}>
+        <button
+          style={{
+            width: '100%',
+            padding: '7px 0',
+            borderRadius: 8,
+            border: '1px solid #334155',
+            background: 'transparent',
+            color: '#10b981',
+            fontSize: 12,
+            fontWeight: 600,
+            cursor: 'pointer',
+          }}
+          onClick={() => {
+            if (filter === 'all') setShowTypePicker((p) => !p);
+            else setShowAddModal(filter as ItemTypeChoice);
+          }}
+        >
+          + Add {filter === 'all' ? 'item' : filter}
+        </button>
+        {showTypePicker && (
+          <div
+            style={{
+              position: 'absolute',
+              top: '100%',
+              left: 14,
+              right: 14,
+              marginTop: 4,
+              background: '#1e293b',
+              border: '1px solid #334155',
+              borderRadius: 8,
+              overflow: 'hidden',
+              zIndex: 10,
+            }}
+          >
+            {(['login', 'note', 'card'] as ItemTypeChoice[]).map((t) => (
+              <button
+                key={t}
+                style={{
+                  display: 'block',
+                  width: '100%',
+                  textAlign: 'left',
+                  padding: '8px 12px',
+                  border: 'none',
+                  background: 'transparent',
+                  color: '#f1f5f9',
+                  fontSize: 12,
+                  cursor: 'pointer',
+                }}
+                onClick={() => {
+                  setShowAddModal(t);
+                  setShowTypePicker(false);
+                }}
+              >
+                {t === 'login'
+                  ? '🔑 Login'
+                  : t === 'note'
+                    ? '📝 Note'
+                    : '💳 Card'}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
       {/* pending banner */}
       {pendingCred && (
         <div
@@ -492,10 +566,20 @@ export default function Vault({ onLogout }: Props) {
         </span>
         <span style={{ color: '#10b981' }}>● Zero-knowledge</span>
       </div>
+
+      {showAddModal && (
+        <AddItemModal
+          type={showAddModal}
+          onClose={() => setShowAddModal(null)}
+          onSaved={() => {
+            isFetchingRef.current = false;
+            loadItems();
+          }}
+        />
+      )}
     </div>
   );
 }
-
 const s: Record<string, React.CSSProperties> = {
   page: {
     display: 'flex',

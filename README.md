@@ -1,4 +1,4 @@
-# 🔐 VaultX — Zero-Knowledge Password Manager
+# 🔐 VaultX — Your Privacy-First Identity Vault
 
 <p>
   <img alt="Status" src="https://img.shields.io/badge/status-public%20beta-F59E0B">
@@ -12,14 +12,7 @@
 
 **Repo:** <https://github.com/jayesh-thar/vaultx>
 
-VaultX is your single secure vault for everything sensitive — login
-credentials, secure notes, and payment cards. Remember just **one master
-password** to access everything, and a separate **PIN** to unlock your
-saved cards. Use it from anywhere: log in to the web app directly, or
-install the browser extension to automatically save new credentials as you
-sign up and register around the web, and autofill them the next time you
-need them. The server never sees a single unencrypted item — everything is
-encrypted and decrypted in your browser using the Web Crypto API.
+VaultX is your single secure vault for everything sensitive — login credentials, secure notes, and payment cards. Remember just **one master password** to access everything, and a separate **PIN** to unlock your saved cards. Use it from anywhere: log in to the web app directly, or install the browser extension to automatically save new credentials as you sign up and register around the web, and autofill them the next time you need them. The server never sees a single unencrypted item — everything is encrypted and decrypted in your browser using the Web Crypto API.
 
 > ⚠️ **Public Beta**: VaultX is functional and the encryption model is solid,
 > but this is an early release. Expect rough edges, and please report bugs —
