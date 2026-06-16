@@ -655,8 +655,20 @@ function SessionsCard() {
             const isCurrent = s.id === currentId;
             const device = (() => {
               try {
-                const d = JSON.parse(s.device_info);
-                return d.userAgent?.slice(0, 60) ?? 'Unknown device';
+                const d =
+                  typeof s.device_info === 'string'
+                    ? JSON.parse(s.device_info)
+                    : s.device_info;
+                const ua: string = d.userAgent ?? '';
+                if (!ua) return 'Unknown device';
+                if (ua.includes('Edg/')) return 'Microsoft Edge';
+                if (ua.includes('Chrome/')) return 'Chrome';
+                if (ua.includes('Firefox/')) return 'Firefox';
+                if (ua.includes('Safari/') && !ua.includes('Chrome'))
+                  return 'Safari';
+                if (ua.includes('OPR/') || ua.includes('Opera/'))
+                  return 'Opera';
+                return ua.slice(0, 40);
               } catch {
                 return 'Unknown device';
               }

@@ -536,7 +536,12 @@ async function handleSaveFormFields(payload: {
   title: string;
   url: string;
   forceSave?: boolean;
-}): Promise<{ saved: boolean; autoSave: boolean }> {
+}): Promise<{
+  saved: boolean;
+  autoSave: boolean;
+  id?: string;
+  title?: string;
+}> {
   const session = await getSession();
   if (!session) return { saved: false, autoSave: false };
 
@@ -544,7 +549,7 @@ async function handleSaveFormFields(payload: {
   const autoSave = prefs.vaultx_autosave !== false; // default ON
 
   if (!autoSave && !payload.forceSave) {
-    return { saved: false, autoSave };
+    return { saved: false, autoSave, id: undefined, title: undefined };
   }
 
   try {
@@ -643,7 +648,7 @@ async function handleSaveFormFields(payload: {
     };
   } catch (err) {
     console.error('[VaultX SW] Save form error:', err);
-    return { saved: false, autoSave: false };
+    return { saved: false, autoSave: false, id: undefined, title: undefined };
   }
 }
 

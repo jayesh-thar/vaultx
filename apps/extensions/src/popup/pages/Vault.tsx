@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { apiRequest } from '../../lib/api';
 import { MSG } from '../../lib/messages';
 import type {
   GetVaultItemsResponse,
@@ -40,6 +41,9 @@ export default function Vault({ onLogout }: Props) {
     title: string;
     expiresAt: number;
   } | null>(null);
+  const [currentTabDomain, setCurrentTabDomain] = useState<string | null>(null);
+  const [domainItems, setDomainItems] = useState<DecryptedItem[]>([]);
+  const [showAutofillPanel, setShowAutofillPanel] = useState(false);
 
   useEffect(() => {
     loadItems();
@@ -48,6 +52,26 @@ export default function Vault({ onLogout }: Props) {
       .then((res) => {
         if (res.email) setEmail(res.email);
       });
+
+    // Get current tab domain for autofill suggestion
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      const url = tabs[0]?.url;
+      if (!url) return;
+      try {
+        const domain = new URL(url).hostname;
+        setCurrentTabDomain(domain);
+        chrome.runtime
+          .sendMessage({ type: MSG.GET_ITEMS_FOR_DOMAIN, payload: { domain } })
+          .then((res: any) => {
+            if (res?.items?.length) {
+              setDomainItems(res.items);
+              setShowAutofillPanel(true);
+            }
+          });
+      } catch {
+        /* ignore */
+      }
+    });
     // Load auto-save preference
     chrome.storage.local.get('vaultx_autosave').then((r) => {
       setAutoSave(r.vaultx_autosave !== false);
@@ -397,6 +421,129 @@ export default function Vault({ onLogout }: Props) {
           </div>
         )}
       </div>
+
+      {/* Autofill panel — shown when current tab has saved logins */}
+      {showAutofillPanel && domainItems.length > 0 && (
+        <div
+          style={{
+            background: '#0D2818',
+            border: '1px solid #10b981',
+            borderRadius: 10,
+            padding: '10px 12px',
+            marginBottom: 4,
+          }}
+        >
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              marginBottom: 8,
+            }}
+          >
+            <p
+              style={{
+                fontSize: 11,
+                fontWeight: 600,
+                color: '#a7f3d0',
+                margin: 0,
+              }}
+            >
+              🔐 Autofill on {currentTabDomain}
+            </p>
+            <button
+              style={{
+                background: 'none',
+                border: 'none',
+                color: '#475569',
+                cursor: 'pointer',
+                fontSize: 12,
+              }}
+              onClick={() => setShowAutofillPanel(false)}
+            >
+              ✕
+            </button>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {domainItems.slice(0, 3).map((item) => (
+              <div
+                key={item.id}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  background: '#0f172a',
+                  borderRadius: 7,
+                  padding: '6px 10px',
+                }}
+              >
+                <div style={{ minWidth: 0 }}>
+                  <p
+                    style={{
+                      fontSize: 12,
+                      fontWeight: 600,
+                      color: '#f1f5f9',
+                      margin: 0,
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {item.payload.title}
+                  </p>
+                  <p
+                    style={{
+                      fontSize: 10,
+                      color: '#64748b',
+                      margin: '1px 0 0',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {item.payload.username || item.payload.email || '—'}
+                  </p>
+                </div>
+                <button
+                  style={{
+                    flexShrink: 0,
+                    padding: '4px 10px',
+                    borderRadius: 6,
+                    border: 'none',
+                    background: '#10b981',
+                    color: '#fff',
+                    fontSize: 11,
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    marginLeft: 8,
+                  }}
+                  onClick={() => {
+                    chrome.tabs.query(
+                      { active: true, currentWindow: true },
+                      (tabs) => {
+                        if (tabs[0]?.id) {
+                          chrome.tabs.sendMessage(tabs[0].id, {
+                            type: 'AUTOFILL_CREDENTIALS',
+                            payload: {
+                              email: item.payload.email,
+                              username: item.payload.username,
+                              password: item.payload.password,
+                            },
+                          });
+                        }
+                      }
+                    );
+                    setShowAutofillPanel(false);
+                  }}
+                >
+                  Fill
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* pending banner */}
       {pendingCred && (
         <div

@@ -154,7 +154,9 @@ export async function listSessions(req: Request, res: Response): Promise<void> {
   try {
     const result = await pool.query(
       `SELECT id, device_info, created_at, expires_at FROM sessions
-       WHERE user_id = $1 AND expires_at > NOW()
+       WHERE user_id = $1
+         AND expires_at > NOW()
+         AND created_at > NOW() - INTERVAL '1 day'
        ORDER BY created_at DESC`,
       [req.user!.userId]
     );

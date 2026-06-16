@@ -104,6 +104,10 @@ export async function registerUser(input: RegisterInput) {
 
     await client.query('COMMIT');
 
+    await client.query(
+      `DELETE FROM sessions WHERE user_id = $1 AND created_at < NOW() - INTERVAL '1 day'`,
+      [userId]
+    );
     const tokens = await createSession(userId, {});
     logAuditEvent(userId, 'register', { ip: 'unknown' });
 
@@ -161,6 +165,12 @@ export async function loginUser(input: LoginInput, deviceInfo: object) {
     logAuditEvent(user.id, 'login_failed', { reason: 'wrong_password' });
     throw new Error('INVALID_CREDENTIALS');
   }
+
+  // Auto-cleanup stale sessions older than 1 day before creating a new one
+  await pool.query(
+    `DELETE FROM sessions WHERE user_id = $1 AND created_at < NOW() - INTERVAL '1 day'`,
+    [user.id]
+  );
 
   const tokens = await createSession(user.id, deviceInfo);
   logAuditEvent(user.id, 'login_success', deviceInfo as AuditMeta);

@@ -31,6 +31,14 @@ export default function AddItemModal({ type, onClose, onSaved }: Props) {
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
   const [showPass, setShowPass] = useState(false);
+  const [showPinSetup, setShowPinSetup] = useState(false);
+  const [pinStep, setPinStep] = useState<'enter' | 'confirm'>('enter');
+  const [newPin, setNewPin] = useState('');
+  const [confirmPin, setConfirmPin] = useState('');
+  const [pinError, setPinError] = useState('');
+  const [pinSaving, setPinSaving] = useState(false);
+  const [savedId, setSavedId] = useState<string | undefined>();
+  const [savedTitle, setSavedTitle] = useState('');
 
   const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
@@ -82,9 +90,26 @@ export default function AddItemModal({ type, onClose, onSaved }: Props) {
 
   async function handleSave() {
     if (!title.trim()) return setError('Title is required');
+
+    // Card-specific validation
+    if (type === 'card') {
+      if (!number.trim()) return setError('Card number is required');
+      if (!/^\d{13,19}$/.test(number.replace(/\s/g, '')))
+        return setError('Card number must be 13–19 digits');
+      if (!expiry.trim()) return setError('Expiry is required');
+      if (!/^\d{2}\/\d{2}$/.test(expiry.trim()))
+        return setError('Expiry must be MM/YY format');
+      const [mm, yy] = expiry.split('/').map(Number);
+      if (mm < 1 || mm > 12) return setError('Month must be 01–12');
+      const now = new Date();
+      const exp = new Date(2000 + yy, mm - 1, 1);
+      if (exp < now) return setError('Card appears to be expired');
+      if (cvv && !/^\d{3,4}$/.test(cvv.trim()))
+        return setError('CVV must be 3 or 4 digits');
+    }
+
     setError('');
     setSaving(true);
-
     let itemPayload: Record<string, unknown>;
     if (type === 'login') {
       itemPayload = {
@@ -128,10 +153,52 @@ export default function AddItemModal({ type, onClose, onSaved }: Props) {
 
     setSaving(false);
     if (res.success) {
+      if (type === 'card') {
+        // Check if PIN already exists; if not, prompt to set one
+        const pinRes = (await chrome.runtime.sendMessage({
+          type: 'CHECK_CARD_PIN_EXISTS',
+        })) as { exists: boolean };
+
+        if (!pinRes.exists) {
+          // First card saved, no PIN set — prompt now
+          setSavedId(res.id);
+          setSavedTitle(title);
+          setShowPinSetup(true);
+          return; // don't close yet
+        }
+      }
       onSaved(res.id, title);
       onClose();
     } else {
       setError(res.error ?? 'Failed to save');
+    }
+  }
+
+  // ADD this new function, right after handleSave:
+  async function handlePinSave() {
+    if (pinStep === 'enter') {
+      if (newPin.length < 4) return setPinError('At least 4 digits required');
+      setPinError('');
+      setPinStep('confirm');
+      return;
+    }
+    if (newPin !== confirmPin) {
+      setPinError("PINs don't match");
+      setConfirmPin('');
+      return;
+    }
+    setPinSaving(true);
+    setPinError('');
+    const res = (await chrome.runtime.sendMessage({
+      type: 'SET_CARD_PIN',
+      payload: { pin: newPin },
+    })) as { success: boolean; error?: string };
+    setPinSaving(false);
+    if (res.success) {
+      onSaved(savedId, savedTitle);
+      onClose();
+    } else {
+      setPinError(res.error ?? 'Failed to set PIN');
     }
   }
 
@@ -311,6 +378,84 @@ export default function AddItemModal({ type, onClose, onSaved }: Props) {
           </button>
         </div>
       </div>
+
+      {showPinSetup && (
+        <div style={{ ...s.overlay, background: 'rgba(15,23,42,0.98)' }}>
+          <div style={s.modal}>
+            <div style={s.header}>
+              <p style={s.title}>🔒 Set Card PIN</p>
+            </div>
+            <div style={{ ...s.body, justifyContent: 'center', gap: 16 }}>
+              <div
+                style={{
+                  padding: '10px 12px',
+                  borderRadius: 8,
+                  background: '#10b98122',
+                  border: '1px solid #10b981',
+                  fontSize: 12,
+                  color: '#a7f3d0',
+                  lineHeight: 1.5,
+                }}
+              >
+                ✓ Card saved! Set a PIN to protect all your payment cards. This
+                PIN is separate from your master password.
+              </div>
+
+              <div style={s.field}>
+                <label style={s.label}>
+                  {pinStep === 'enter' ? 'New PIN (4–8 digits)' : 'Confirm PIN'}
+                </label>
+                <input
+                  style={{
+                    ...s.input,
+                    letterSpacing: 8,
+                    textAlign: 'center',
+                    fontSize: 18,
+                  }}
+                  type="password"
+                  inputMode="numeric"
+                  maxLength={8}
+                  value={pinStep === 'enter' ? newPin : confirmPin}
+                  autoFocus
+                  onChange={(e) => {
+                    const v = e.target.value.replace(/\D/g, '');
+                    pinStep === 'enter' ? setNewPin(v) : setConfirmPin(v);
+                    setPinError('');
+                  }}
+                  onKeyDown={(e) => e.key === 'Enter' && handlePinSave()}
+                  placeholder="• • • •"
+                />
+              </div>
+
+              {pinError && <div style={s.error}>⚠ {pinError}</div>}
+            </div>
+
+            <div style={s.footer}>
+              <button
+                style={s.cancelBtn}
+                onClick={() => {
+                  // Skip PIN — still close and mark saved
+                  onSaved(savedId, savedTitle);
+                  onClose();
+                }}
+              >
+                Skip for now
+              </button>
+              <button
+                style={s.saveBtn}
+                onClick={handlePinSave}
+                disabled={pinSaving}
+              >
+                {pinSaving
+                  ? 'Saving...'
+                  : pinStep === 'enter'
+                    ? 'Continue →'
+                    : 'Set PIN'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

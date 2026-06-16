@@ -26,6 +26,8 @@ Thumbs.db
 
 # Extension build output
 apps/extension/dist/
+apps/apps/dist/
+apps/web/dist/
 
 # TypeScript
 *.tsbuildinfo

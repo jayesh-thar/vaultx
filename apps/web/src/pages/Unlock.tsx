@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import type { AxiosError } from 'axios';
+// import type { AxiosError } from 'axios';
 import api from '../lib/api';
 import { deriveKeys, toHex } from '../lib/kdf';
 import { decryptBytes } from '../lib/crypto';
