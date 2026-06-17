@@ -275,7 +275,11 @@ function showSaveToast(message: string) {
   setTimeout(() => toast.remove(), 3000);
 }
 
-function showAutoSaveToast(itemId: string | undefined, title: string) {
+function showAutoSaveToast(
+  itemId: string | undefined,
+  title: string,
+  updated = false
+) {
   document.getElementById('vaultx-toast')?.remove();
   const toast = document.createElement('div');
   toast.id = 'vaultx-toast';
@@ -287,7 +291,8 @@ function showAutoSaveToast(itemId: string | undefined, title: string) {
     z-index:2147483647;box-shadow:0 4px 16px rgba(16,185,129,0.4);
     display:flex;align-items:center;gap:10px;
   `;
-  toast.innerHTML = `<span>✓ Saved "${escapeHtml(title.slice(0, 24))}"</span>${
+  const action = updated ? '✓ Updated' : '✓ Saved';
+  toast.innerHTML = `<span>${action} "${escapeHtml(title.slice(0, 24))}"</span>${
     itemId
       ? '<button id="vx-undo" style="background:rgba(255,255,255,0.2);border:none;color:#fff;border-radius:6px;padding:4px 8px;font-size:12px;cursor:pointer;font-weight:600;">Cancel</button>'
       : ''
@@ -485,7 +490,22 @@ function showAutofillSuggestion(items: AutofillItem[]) {
 }
 
 async function checkAutofillSuggestion() {
-  if (!findPasswordInput()) return; // no login form on this page
+  // Only show if there's a visible password input AND at least one other
+  // visible text/email field — this rules out pages where a password field
+  // exists but isn't part of a login form yet (e.g. hidden in a SPA)
+  const passwordInput = findPasswordInput();
+  if (!passwordInput) return;
+
+  const otherInputs = Array.from(
+    document.querySelectorAll<HTMLInputElement>('input')
+  ).filter((inp) => {
+    if (inp === passwordInput) return false;
+    if (['hidden', 'submit', 'button', 'checkbox', 'radio'].includes(inp.type))
+      return false;
+    const style = window.getComputedStyle(inp);
+    return style.display !== 'none' && style.visibility !== 'hidden';
+  });
+  if (otherInputs.length === 0) return; // password field exists but no accompanying fields
 
   try {
     const session = (await chrome.runtime.sendMessage({
@@ -567,7 +587,11 @@ function setupFormSubmitCapture() {
     } | null;
 
     if (response?.saved) {
-      showAutoSaveToast(response.id, response.title || title);
+      showAutoSaveToast(
+        response.id,
+        response.title || title,
+        (response as any).updated
+      );
     } else if (response && !response.autoSave) {
       showSaveBanner(fields, domain, title);
     }

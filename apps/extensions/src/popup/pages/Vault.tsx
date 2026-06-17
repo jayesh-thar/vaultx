@@ -83,6 +83,18 @@ export default function Vault({ onLogout }: Props) {
       .then((res: any) => {
         if (res) setPendingCred(res);
       });
+
+    // Check for a recently auto-saved item (5-min undo window)
+    chrome.storage.session.get('lastAutoSavedItem').then((r) => {
+      const item = r.lastAutoSavedItem as
+        | {
+            id: string;
+            title: string;
+            expiresAt: number;
+          }
+        | undefined;
+      if (item && Date.now() < item.expiresAt) setRecentSave(item);
+    });
   }, []);
 
   useEffect(() => {
@@ -541,6 +553,50 @@ export default function Vault({ onLogout }: Props) {
               </div>
             ))}
           </div>
+        </div>
+      )}
+
+      {recentSave && (
+        <div
+          style={{
+            background: '#0D2818',
+            border: '1px solid #10b981',
+            borderRadius: 10,
+            padding: '8px 12px',
+            marginBottom: 4,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 8,
+          }}
+        >
+          <span style={{ fontSize: 11, color: '#a7f3d0' }}>
+            ✓ Auto-saved "{recentSave.title.slice(0, 22)}"
+          </span>
+          <button
+            style={{
+              background: 'rgba(255,255,255,0.15)',
+              border: 'none',
+              color: '#fff',
+              borderRadius: 6,
+              padding: '4px 10px',
+              fontSize: 11,
+              cursor: 'pointer',
+              fontWeight: 600,
+            }}
+            onClick={async () => {
+              await chrome.runtime.sendMessage({
+                type: MSG.DELETE_VAULT_ITEM,
+                payload: { id: recentSave.id },
+              });
+              await chrome.storage.session.remove('lastAutoSavedItem');
+              setRecentSave(null);
+              isFetchingRef.current = false;
+              loadItems();
+            }}
+          >
+            Undo
+          </button>
         </div>
       )}
 

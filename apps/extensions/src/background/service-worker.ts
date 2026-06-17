@@ -143,6 +143,8 @@ async function handleMessage(msg: ExtensionMessage): Promise<unknown> {
       return { success: true };
     case MSG.REUNLOCK:
       return handleReunlock(msg.payload);
+    case 'UPSERT_CREDENTIAL':
+      return handleUpsertCredential((msg as any).payload);
     case MSG.ADD_VAULT_ITEM:
       return handleAddVaultItem((msg as any).payload);
     case MSG.DELETE_VAULT_ITEM:
@@ -634,6 +636,23 @@ async function handleSaveFormFields(payload: {
       masterKey
     );
 
+    // For login items: upsert (update if same domain+username exists, else create)
+    if (itemType === 'login') {
+      const upsertRes = await handleUpsertCredential({
+        fields: payload.fields,
+        domain: payload.domain,
+        title: payload.title,
+        url: payload.url,
+      });
+      return {
+        saved: upsertRes.saved,
+        autoSave,
+        id: upsertRes.id,
+        title: upsertRes.title,
+      };
+    }
+
+    // Cards are always new (can have multiple cards)
     const res = await apiRequest<{ id?: string }>('/api/vault/items', {
       method: 'POST',
       token: session.accessToken,
@@ -649,6 +668,102 @@ async function handleSaveFormFields(payload: {
   } catch (err) {
     console.error('[VaultX SW] Save form error:', err);
     return { saved: false, autoSave: false, id: undefined, title: undefined };
+  }
+}
+
+async function handleUpsertCredential(payload: {
+  fields: Array<{ name: string; type: string; value: string; label: string }>;
+  domain: string;
+  title: string;
+  url: string;
+}): Promise<{ saved: boolean; updated: boolean; id?: string; title?: string }> {
+  const session = await getSession();
+  if (!session) return { saved: false, updated: false };
+
+  const masterKey = new Uint8Array(
+    session.masterKey
+  ) as Uint8Array<ArrayBuffer>;
+
+  // Build the new payload
+  const standard: Record<string, string> = {};
+  const standardKeys = [
+    'email',
+    'username',
+    'password',
+    'firstName',
+    'lastName',
+  ];
+  for (const field of payload.fields) {
+    if (field.type === 'password' && !field.value) continue;
+    if (standardKeys.includes(field.name)) standard[field.name] = field.value;
+  }
+
+  const newUsername = standard.username || standard.email || '';
+  const newPassword = standard.password || '';
+
+  // Fetch all existing items to check for duplicates
+  const allRes = await handleGetVaultItems();
+  const existing = (allRes.items ?? []).find((item) => {
+    if (item.type !== 'login') return false;
+    const url = item.payload.url ?? '';
+    let itemDomain = '';
+    try {
+      itemDomain = new URL(url.startsWith('http') ? url : 'https://' + url)
+        .hostname;
+    } catch {}
+    const sameUser =
+      (item.payload.username || (item.payload as any).email || '') ===
+      newUsername;
+    return itemDomain === payload.domain && sameUser;
+  });
+
+  const itemPayload = {
+    title: payload.title || payload.domain,
+    url: payload.url,
+    username: newUsername,
+    email: standard.email || '',
+    password: newPassword,
+    notes: '',
+    favorite: false,
+    passwordChangedAt: new Date().toISOString(),
+  };
+
+  const { ciphertext, iv } = await encrypt(
+    JSON.stringify(itemPayload),
+    masterKey
+  );
+
+  try {
+    if (existing) {
+      // Update existing item
+      await apiRequest(`/api/vault/items/${existing.id}`, {
+        method: 'PUT',
+        token: session.accessToken,
+        body: { encryptedData: ciphertext, iv },
+      });
+      return {
+        saved: true,
+        updated: true,
+        id: existing.id,
+        title: itemPayload.title,
+      };
+    } else {
+      // Create new
+      const res = await apiRequest<{ id?: string }>('/api/vault/items', {
+        method: 'POST',
+        token: session.accessToken,
+        body: { type: 'login', encryptedData: ciphertext, iv },
+      });
+      return {
+        saved: true,
+        updated: false,
+        id: res?.id,
+        title: itemPayload.title,
+      };
+    }
+  } catch (err) {
+    console.error('[VaultX SW] Upsert error:', err);
+    return { saved: false, updated: false };
   }
 }
 
