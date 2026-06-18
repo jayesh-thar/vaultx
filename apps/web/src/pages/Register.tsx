@@ -96,22 +96,28 @@ export default function Register() {
       });
 
       // Trigger recovery key file download
-      const blob = new Blob(
-        [
-          `VaultX Recovery Key\n\nEmail: ${normalizedEmail}\nRecovery Key: ${recoveryString}\n\nKeep this safe. It's the ONLY way to recover your vault if you forget your master password.\nDo not share it with anyone. We've also emailed a copy to your registered email address.`,
-        ],
-        { type: 'text/plain' }
-      );
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `vaultx-recovery-key-${normalizedEmail.split('@')[0]}.txt`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-
       setAuth(data.userId, data.accessToken);
+
+      // Trigger recovery key file download AFTER auth is set
+      // Use setTimeout to ensure it runs outside the current microtask queue
+      // so browser doesn't block the download
+      window.setTimeout(() => {
+        const blob = new Blob(
+          [
+            `VaultX Recovery Key\n\nEmail: ${normalizedEmail}\nRecovery Key: ${recoveryString}\n\nKeep this safe. It's the ONLY way to recover your vault if you forget your master password.\nDo not share it with anyone. We've also emailed a copy to your registered email address.`,
+          ],
+          { type: 'text/plain' }
+        );
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `vaultx-recovery-key-${normalizedEmail.split('@')[0]}.txt`;
+        a.style.display = 'none';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      }, 500);
 
       saveKdfLocally(normalizedEmail, kdfSalt, DEFAULT_KDF_PARAMS);
       setVaultKey(masterKey);

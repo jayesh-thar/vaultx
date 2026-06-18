@@ -636,8 +636,11 @@ export default function ForgotPassword() {
                 accept=".txt"
                 onChange={handleRecoveryFileUpload}
                 aria-label="Upload recovery key file"
-                className="w-full text-sm"
-                style={{ color: 'var(--text-secondary)' }}
+                className="w-full text-sm p-1 cursor-pointer"
+                style={{
+                  color: 'var(--text-secondary)',
+                  border: '0.5px solid rgba(16,185,129,0.3)',
+                }}
               />
               {recoveryFile && (
                 <p className="text-xs mt-1" style={{ color: 'var(--accent)' }}>

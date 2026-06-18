@@ -4,7 +4,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import api from '../lib/api';
 import { deriveKeys, toHex } from '../lib/kdf';
 import { decryptBytes } from '../lib/crypto';
-import { loadSession, saveSession } from '../lib/storage';
+import { clearStoredSession, loadSession, saveSession } from '../lib/storage';
 import { useVaultStore } from '../store/useVaultStore';
 
 export default function Unlock() {
@@ -170,19 +170,20 @@ export default function Unlock() {
             </div>
           </div>
 
-          <button
-            onClick={handleUnlock}
-            disabled={loading}
-            className="w-full rounded-lg py-2.5 text-sm font-medium mt-2"
-            style={{
-              background: 'var(--accent)',
-              color: '#fff',
-              opacity: loading ? 0.7 : 1,
-              cursor: loading ? 'not-allowed' : 'pointer',
-            }}
+          <p
+            className="text-center text-xs mt-1"
+            style={{ color: 'var(--text-muted)' }}
           >
-            {loading ? 'Unlocking...' : 'Unlock vault'}
-          </button>
+            <Link
+              to="/forgot-password"
+              style={{
+                color: 'var(--text-muted)',
+                textDecoration: 'underline',
+              }}
+            >
+              Forgot your master password?
+            </Link>
+          </p>
         </div>
 
         <p
@@ -190,9 +191,22 @@ export default function Unlock() {
           style={{ color: 'var(--text-muted)' }}
         >
           Different account?{' '}
-          <Link to="/login" style={{ color: 'var(--accent)' }}>
+          <button
+            onClick={() => {
+              clearStoredSession(); // wipe the cached session
+              navigate('/login', { replace: true });
+            }}
+            style={{
+              background: 'none',
+              border: 'none',
+              color: 'var(--accent)',
+              cursor: 'pointer',
+              fontSize: 'inherit',
+              padding: 0,
+            }}
+          >
             Sign in
-          </Link>
+          </button>
         </p>
       </div>
     </div>

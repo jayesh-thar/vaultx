@@ -884,11 +884,19 @@ function SecurityTab({ session }: { session: ReturnType<typeof loadSession> }) {
         navigate('/login');
       }, 2000);
     } catch (e: any) {
-      setErrorMsg(
+      const serverMsg =
         e.response?.data?.error ??
-          e.response?.data?.message ??
-          'Failed. Try again.'
-      );
+        e.response?.data?.message ??
+        e.message ??
+        null;
+
+      if (e.response?.status === 401) {
+        setErrorMsg('Current password is incorrect. Please try again.');
+      } else if (serverMsg) {
+        setErrorMsg(serverMsg);
+      } else {
+        setErrorMsg('Failed to change password. Please try again.');
+      }
     } finally {
       setSaving(false);
     }
