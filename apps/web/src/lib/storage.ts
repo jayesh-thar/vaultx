@@ -35,15 +35,42 @@ export function clearStoredSession(): void {
   localStorage.removeItem(SESSION_KEY);
 }
 
+export function clearAllLocalVaultData(): void {
+  // Full wipe — used on "delete account" or "forget this device"
+  Object.keys(localStorage)
+    .filter((k) => k.startsWith('vx_'))
+    .forEach((k) => localStorage.removeItem(k));
+}
+
 // Keep these for backward compat — used in kdf derivation
 export function saveKdfLocally(
-  _email: string, // (The _ prefix tells TypeScript "I know this is unused, that's intentional.")
+  email: string,
   kdfSalt: string,
   kdfParams: KdfParams
 ): void {
-  const existing = loadSession();
-  if (existing) {
-    saveSession({ ...existing, kdfSalt, kdfParams });
+  const key = `vx_kdf_${email}`;
+  localStorage.setItem(
+    key,
+    JSON.stringify({ kdfSalt, kdfParams, savedAt: Date.now() })
+  );
+
+  // Cap to 3 most recent accounts on this device — evict oldest
+  const kdfKeys = Object.keys(localStorage).filter((k) =>
+    k.startsWith('vx_kdf_')
+  );
+  if (kdfKeys.length > 3) {
+    const entries = kdfKeys
+      .map((k) => {
+        try {
+          const v = JSON.parse(localStorage.getItem(k) ?? '{}');
+          return { key: k, savedAt: v.savedAt ?? 0 };
+        } catch {
+          return { key: k, savedAt: 0 };
+        }
+      })
+      .sort((a, b) => a.savedAt - b.savedAt);
+    const toRemove = entries.slice(0, entries.length - 3);
+    toRemove.forEach((e) => localStorage.removeItem(e.key));
   }
 }
 

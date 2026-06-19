@@ -65,7 +65,7 @@ export default function Register() {
     setLoading(true);
     try {
       const kdfSalt = await generateSalt();
-      const authSalt = await generateSalt(); // ← both salts generated INSIDE here
+      const authSalt = await generateSalt();
 
       const { authKey, vaultKey: derivedKey } = await deriveKeys(
         password,
@@ -100,7 +100,6 @@ export default function Register() {
         recoveryKeyDisplay: recoveryString,
       });
 
-      // Trigger recovery key file download
       const blob = new Blob(
         [
           `VaultX Recovery Key\n\nEmail: ${normalizedEmail}\nRecovery Key: ${recoveryString}\n\nKeep this safe. It's the ONLY way to recover your vault if you forget your master password.\nDo not share it with anyone.`,
@@ -108,7 +107,6 @@ export default function Register() {
         { type: 'text/plain' }
       );
 
-      // Store auth but DON'T navigate — show recovery key screen
       setAuth(data.userId, data.accessToken);
       saveKdfLocally(normalizedEmail, kdfSalt, DEFAULT_KDF_PARAMS);
       setVaultKey(masterKey);
@@ -121,20 +119,10 @@ export default function Register() {
         vaultKeyIv,
       });
 
-      // Show the recovery key screen instead of going straight to dashboard
       setRecoveryKeyData({ key: recoveryString, email: normalizedEmail, blob });
-
-      saveKdfLocally(normalizedEmail, kdfSalt, DEFAULT_KDF_PARAMS);
-      setVaultKey(masterKey);
-      saveSession({
-        email: normalizedEmail,
-        userId: data.userId,
-        kdfSalt,
-        kdfParams: DEFAULT_KDF_PARAMS,
-        vaultKeyEnc,
-        vaultKeyIv,
-      });
-      navigate('/dashboard');
+      // Function ends HERE. No navigate() call. Nothing after this line
+      // in the try block. The component re-renders with recoveryKeyData
+      // set, which triggers the `if (recoveryKeyData)` screen below.
     } catch (err) {
       const e = err as AxiosError<{ message?: string; error?: string }>;
       setError(
@@ -143,7 +131,7 @@ export default function Register() {
           'Registration failed. Please try again.'
       );
     } finally {
-      setLoading(false); // ← ADD: always reset, even on error
+      setLoading(false);
     }
   }
 
