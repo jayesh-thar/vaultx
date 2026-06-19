@@ -6,7 +6,11 @@ import {
   toHex,
   DEFAULT_KDF_PARAMS,
 } from '../lib/kdf';
-import { encryptBytes } from '../lib/crypto';
+import {
+  encryptBytes,
+  generateRecoveryKey,
+  recoveryKeyToString,
+} from '../lib/crypto';
 import { saveSession } from '../lib/storage';
 import { useVaultStore } from '../store/useVaultStore';
 import api from '../lib/api';
@@ -71,6 +75,12 @@ export default function GoogleSetup() {
         derivedKey
       );
 
+      // Generate recovery key — same as email/password registration
+      const recoveryKey = generateRecoveryKey();
+      const { ciphertext: recoveryKeyEnc, iv: recoveryKeyIv } =
+        await encryptBytes(masterKey, recoveryKey);
+      const recoveryString = recoveryKeyToString(recoveryKey);
+
       const { data } = await api.post('/api/auth/google/complete', {
         userId,
         authKey: toHex(authKey),
@@ -79,6 +89,9 @@ export default function GoogleSetup() {
         kdfParams: DEFAULT_KDF_PARAMS,
         vaultKeyEnc,
         vaultKeyIv,
+        recoveryKeyEnc,
+        recoveryKeyIv,
+        recoveryKeyDisplay: recoveryString,
       });
 
       saveSession({
@@ -91,6 +104,7 @@ export default function GoogleSetup() {
       });
       setAuth(userId, data.accessToken);
       setVaultKey(masterKey);
+
       const blob = new Blob(
         [
           `VaultX Recovery Key\n\nEmail: ${email}\nRecovery Key: ${recoveryString}\n\nKeep this safe. It's the ONLY way to recover your vault if you forget your master password.\nDo not share it with anyone.`,
@@ -98,11 +112,136 @@ export default function GoogleSetup() {
         { type: 'text/plain' }
       );
       setRecoveryKeyData({ key: recoveryString, email, blob });
+      // No navigate() — recovery screen takes over via conditional render
     } catch {
       setError('Setup failed. Please try again.');
     } finally {
       setLoading(false);
     }
+  }
+
+  if (recoveryKeyData) {
+    return (
+      <div
+        className="min-h-screen flex items-center justify-center px-4"
+        style={{ background: 'var(--bg-base)' }}
+      >
+        <div
+          className="w-full max-w-md rounded-2xl p-8"
+          style={{
+            background: 'var(--bg-surface)',
+            border: '0.5px solid var(--border)',
+          }}
+        >
+          <div className="flex flex-col items-center mb-6">
+            <div
+              className="flex items-center justify-center w-12 h-12 rounded-xl mb-4"
+              style={{ background: 'rgba(16,185,129,0.1)' }}
+            >
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+                <path
+                  d="M20 6L9 17l-5-5"
+                  stroke="#10B981"
+                  strokeWidth="2.5"
+                  strokeLinecap="round"
+                />
+              </svg>
+            </div>
+            <h1
+              className="text-xl font-medium"
+              style={{ color: 'var(--text-primary)' }}
+            >
+              Vault created!
+            </h1>
+            <p
+              className="text-sm mt-1 text-center"
+              style={{ color: 'var(--text-muted)' }}
+            >
+              Save your recovery key before continuing
+            </p>
+          </div>
+
+          <div
+            className="rounded-xl p-4 mb-4"
+            style={{
+              background: 'rgba(239,68,68,0.07)',
+              border: '0.5px solid rgba(239,68,68,0.3)',
+            }}
+          >
+            <p
+              className="text-xs font-semibold mb-1"
+              style={{ color: '#EF4444' }}
+            >
+              ⚠ Save this before continuing
+            </p>
+            <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>
+              This is the ONLY way to recover your vault if you forget your
+              master password. We've emailed a copy too, but download this file
+              as a backup.
+            </p>
+          </div>
+
+          <div
+            className="rounded-xl p-4 mb-4"
+            style={{
+              background: 'var(--bg-elevated)',
+              border: '0.5px solid var(--border)',
+            }}
+          >
+            <p
+              className="text-xs font-medium mb-2"
+              style={{ color: 'var(--text-muted)' }}
+            >
+              Your Recovery Key
+            </p>
+            <p
+              className="text-sm font-mono break-all"
+              style={{ color: 'var(--text-primary)', letterSpacing: '0.05em' }}
+            >
+              {recoveryKeyData.key}
+            </p>
+          </div>
+
+          <div className="flex flex-col gap-2">
+            <button
+              onClick={() => {
+                const url = URL.createObjectURL(recoveryKeyData.blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `vaultx-recovery-key-${recoveryKeyData.email.split('@')[0]}.txt`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                setTimeout(() => URL.revokeObjectURL(url), 1000);
+              }}
+              className="w-full rounded-lg py-2.5 text-sm font-medium"
+              style={{ background: 'var(--accent)', color: '#fff' }}
+            >
+              ⬇ Download recovery key file
+            </button>
+
+            <button
+              onClick={() => navigate('/dashboard')}
+              className="w-full rounded-lg py-2.5 text-sm"
+              style={{
+                background: 'transparent',
+                color: 'var(--text-muted)',
+                border: '0.5px solid var(--border)',
+              }}
+            >
+              I've saved it — go to my vault
+            </button>
+          </div>
+
+          <p
+            className="text-center text-xs mt-4"
+            style={{ color: 'var(--text-muted)' }}
+          >
+            You can always generate a new recovery key from Settings if needed.
+          </p>
+        </div>
+      </div>
+    );
   }
 
   return (
