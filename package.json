@@ -14,7 +14,7 @@
     "dev:api": "npm run dev --workspace=apps/api",
     "dev:web": "npm run dev --workspace=apps/web",
     "dev:extension": "npm run dev --workspace=apps/extension",
-    "prepare": "husky"
+    "prepare": "node -e \"try { if (require('fs').existsSync('.git')) require('child_process').execSync('husky', {stdio: 'inherit'}) } catch (e) {}\""
   },
   "lint-staged": {
     "**/*.{ts,tsx,js,jsx}": [
