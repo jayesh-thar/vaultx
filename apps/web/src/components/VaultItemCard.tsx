@@ -24,6 +24,88 @@ interface Props {
   onShare: () => void;
 }
 
+function CopyField({
+  label,
+  value,
+  secret = false,
+}: {
+  label: string;
+  value: string;
+  secret?: boolean;
+}) {
+  const [copied, setCopied] = useState(false);
+  const [show, setShow] = useState(false);
+
+  return (
+    <div
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 3,
+        marginBottom: 8,
+      }}
+    >
+      <span
+        className="text-xs"
+        style={{
+          color: 'var(--text-muted)',
+          textTransform: 'uppercase',
+          letterSpacing: '0.05em',
+          fontWeight: 600,
+        }}
+      >
+        {label}
+      </span>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        <span
+          className="text-sm font-mono"
+          style={{
+            color: 'var(--text-secondary)',
+            flex: 1,
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          {secret && !show ? '••••••••' : value}
+        </span>
+        {secret && (
+          <button
+            onClick={() => setShow((s) => !s)}
+            className="text-xs px-2 py-1 rounded"
+            style={{
+              background: 'var(--bg-elevated)',
+              border: '0.5px solid var(--border)',
+              color: 'var(--text-muted)',
+              cursor: 'pointer',
+              flexShrink: 0,
+            }}
+          >
+            {show ? 'Hide' : 'Show'}
+          </button>
+        )}
+        <button
+          onClick={() => {
+            navigator.clipboard.writeText(value);
+            setCopied(true);
+            setTimeout(() => setCopied(false), 1500);
+          }}
+          className="text-xs px-2 py-1 rounded"
+          style={{
+            background: copied ? 'var(--accent-subtle)' : 'var(--bg-elevated)',
+            border: '0.5px solid var(--border)',
+            color: copied ? 'var(--accent)' : 'var(--text-muted)',
+            cursor: 'pointer',
+            flexShrink: 0,
+          }}
+        >
+          {copied ? '✓' : 'Copy'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function getPasswordStrength(p: string) {
   if (p.length < 8) return { label: 'Weak', color: '#EF4444', bars: 1 };
 
@@ -118,6 +200,7 @@ export default function VaultItemCard({
   const [copyCountdown] = useState<number | null>(null);
   const [faviconError, setFaviconError] = useState(false);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [showDetails, setShowDetails] = useState(false);
 
   const { payload, type } = item;
   const faviconUrl =
@@ -599,6 +682,20 @@ export default function VaultItemCard({
         </button>
 
         <button
+          onClick={() => setShowDetails((p) => !p)}
+          className="flex-1 text-xs py-1.5 rounded-lg vx-btn-ghost"
+          style={{
+            color: showDetails ? 'var(--accent)' : 'var(--text-secondary)',
+            background: showDetails
+              ? 'var(--accent-subtle)'
+              : 'var(--bg-elevated)',
+            border: showDetails ? '0.5px solid var(--accent)' : 'none',
+          }}
+        >
+          {showDetails ? 'Hide' : 'Details'}
+        </button>
+
+        <button
           onClick={onEdit}
           className="flex-1 text-xs py-1.5 rounded-lg vx-btn-ghost"
           style={{
@@ -621,6 +718,93 @@ export default function VaultItemCard({
           {confirmDelete ? 'Confirm?' : 'Delete'}
         </button>
       </div>
+
+      {/* Details expand panel */}
+      {showDetails && (
+        <div
+          className="mx-4 mb-3 rounded-xl overflow-hidden"
+          style={{
+            border: '0.5px solid var(--border)',
+            background: 'var(--bg-elevated)',
+          }}
+        >
+          <div className="px-3 pt-3 pb-2">
+            {type === 'login' && (
+              <>
+                {payload.username && (
+                  <CopyField label="Username" value={payload.username} />
+                )}
+                {(payload as any).email && (
+                  <CopyField label="Email" value={(payload as any).email} />
+                )}
+                {payload.password && (
+                  <CopyField label="Password" value={payload.password} secret />
+                )}
+                {payload.url && <CopyField label="URL" value={payload.url} />}
+                {payload.notes && (
+                  <CopyField label="Notes" value={payload.notes} />
+                )}
+                {payload.totpSecret && (
+                  <CopyField
+                    label="TOTP Secret"
+                    value={payload.totpSecret}
+                    secret
+                  />
+                )}
+                {(payload.customFields ?? []).map((f: any) => (
+                  <CopyField
+                    key={f.id}
+                    label={f.label || 'Custom field'}
+                    value={f.value}
+                    secret={f.type === 'password'}
+                  />
+                ))}
+              </>
+            )}
+            {type === 'note' && (
+              <>
+                {payload.content && (
+                  <CopyField label="Content" value={payload.content} />
+                )}
+                {payload.notes && (
+                  <CopyField label="Notes" value={payload.notes} />
+                )}
+                {(payload.customFields ?? []).map((f: any) => (
+                  <CopyField
+                    key={f.id}
+                    label={f.label || 'Custom field'}
+                    value={f.value}
+                    secret={f.type === 'password'}
+                  />
+                ))}
+              </>
+            )}
+            {type === 'card' && (
+              <>
+                {payload.cardholder && (
+                  <CopyField label="Cardholder" value={payload.cardholder} />
+                )}
+                {payload.number && (
+                  <CopyField
+                    label="Card Number"
+                    value={payload.number.replace(/(.{4})/g, '$1 ').trim()}
+                    secret
+                  />
+                )}
+                {payload.expiry && (
+                  <CopyField label="Expiry" value={payload.expiry} />
+                )}
+                {payload.cvv && (
+                  <CopyField label="CVV" value={payload.cvv} secret />
+                )}
+                {payload.notes && (
+                  <CopyField label="Notes" value={payload.notes} />
+                )}
+              </>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Password History Panel — OUTSIDE the action bar */}
       {showHistory && (payload.passwordHistory?.length ?? 0) > 0 && (

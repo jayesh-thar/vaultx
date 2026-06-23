@@ -501,10 +501,6 @@ export default function Dashboard() {
       if (!digits) return setFormError('Card number is required.');
       if (digits.length < 13 || digits.length > 19)
         return setFormError('Card number must be 13–19 digits.');
-      if (!luhnCheck(digits))
-        return setFormError(
-          'Card number appears invalid (failed checksum). Please double-check it.'
-        );
       if (!form.expiry || form.expiry.length < 5)
         return setFormError('Expiry date is required (MM/YY).');
       const [mm, yy] = form.expiry.split('/').map(Number);
@@ -1270,21 +1266,10 @@ export default function Dashboard() {
                       className="w-full rounded-lg px-3 py-2 text-sm outline-none vx-input font-mono"
                       style={{
                         background: 'var(--bg-elevated)',
-                        border:
-                          form.number.length >= 13 && !luhnCheck(form.number)
-                            ? '0.5px solid var(--danger)'
-                            : '0.5px solid var(--border)',
+                        border: '0.5px solid var(--border)',
                         color: 'var(--text-primary)',
                       }}
                     />
-                    {form.number.length >= 13 && !luhnCheck(form.number) && (
-                      <p
-                        className="text-xs mt-1"
-                        style={{ color: 'var(--danger)' }}
-                      >
-                        ⚠ Invalid card number
-                      </p>
-                    )}
                   </div>
                   <div className="flex gap-2">
                     <div className="flex-1">
@@ -1302,8 +1287,8 @@ export default function Dashboard() {
                             let v = e.target.value.replace(/\D/g, '');
                             if (v.length >= 2)
                               v = v.slice(0, 2) + '/' + v.slice(2);
-                            if (v.length <= 5)
-                              setForm((f) => ({ ...f, expiry: v }));
+                            if (v.length > 5) v = v.slice(0, 5);
+                            setForm((f) => ({ ...f, expiry: v }));
                           }}
                           placeholder="MM/YY"
                           maxLength={5}
@@ -1313,15 +1298,41 @@ export default function Dashboard() {
                             border: (() => {
                               if (!form.expiry || form.expiry.length < 5)
                                 return '0.5px solid var(--border)';
-                              const [m] = form.expiry.split('/');
-                              const month = parseInt(m);
-                              return month >= 1 && month <= 12
-                                ? '0.5px solid var(--border)'
-                                : '0.5px solid var(--danger)';
+                              const [m, y] = form.expiry.split('/').map(Number);
+                              const valid = m >= 1 && m <= 12;
+                              const expDate = new Date(2000 + y, m, 0);
+                              const expired = valid && expDate < new Date();
+                              return !valid || expired
+                                ? '0.5px solid var(--danger)'
+                                : '0.5px solid var(--border)';
                             })(),
                             color: 'var(--text-primary)',
                           }}
                         />
+                        {form.expiry.length === 5 &&
+                          (() => {
+                            const [m, y] = form.expiry.split('/').map(Number);
+                            if (m < 1 || m > 12)
+                              return (
+                                <p
+                                  className="text-xs mt-1"
+                                  style={{ color: 'var(--danger)' }}
+                                >
+                                  ⚠ Month must be 01–12
+                                </p>
+                              );
+                            const expDate = new Date(2000 + y, m, 0);
+                            if (expDate < new Date())
+                              return (
+                                <p
+                                  className="text-xs mt-1"
+                                  style={{ color: 'var(--danger)' }}
+                                >
+                                  ⚠ This card has already expired
+                                </p>
+                              );
+                            return null;
+                          })()}
                       </div>
                     </div>
                     <div style={{ width: 100 }}>

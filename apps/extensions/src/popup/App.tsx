@@ -163,6 +163,20 @@ export default function App() {
             Signed in as{' '}
             <strong style={{ color: '#f1f5f9' }}>{savedEmail}</strong>
           </p>
+          <div
+            style={{
+              padding: '8px 10px',
+              borderRadius: 7,
+              background: '#0f172a',
+              border: '1px solid #1e3a5f',
+              fontSize: 11,
+              color: '#60a5fa',
+              lineHeight: 1.5,
+            }}
+          >
+            🔒 Your session expires every 7 days for security. Re-enter your
+            master password to continue — your vault data is safe.
+          </div>
           <div style={s.field}>
             <label style={s.label}>Master Password</label>
             <input

@@ -27,7 +27,8 @@ async function storePendingCapture(
   fields: CapturedField[],
   domain: string,
   title: string,
-  url: string
+  url: string,
+  passwordValue: string = ''
 ) {
   await chrome.storage.session.set({
     [PENDING_CAPTURE_KEY]: {
@@ -37,6 +38,7 @@ async function storePendingCapture(
       url,
       submittedUrl: window.location.href,
       timestamp: Date.now(),
+      passwordValue, // track to detect failed logins
     },
   });
 }
@@ -51,24 +53,34 @@ async function checkPendingCaptureOnLoad() {
         url: string;
         submittedUrl: string;
         timestamp: number;
+        passwordValue: string; // ADD: track password value at submit time
       }
     | undefined;
 
   if (!pending) return;
   await chrome.storage.session.remove(PENDING_CAPTURE_KEY);
 
-  // Too old — abandoned form, discard
   if (Date.now() - pending.timestamp > CAPTURE_TIMEOUT_MS) return;
 
-  // Same URL as when submitted = page didn't navigate = likely a
-  // failed login (error shown on same page) → discard, don't save
   const navigated = window.location.href !== pending.submittedUrl;
-  if (!navigated) {
-    console.log('[VaultX] Login likely failed (no navigation) — not saving');
+
+  // Check if password field still has the same value (failed login = still there unchanged)
+  const currentPasswordField = findPasswordInput();
+  const passwordStillSame =
+    currentPasswordField?.value === pending.passwordValue;
+  const _passwordGone = !currentPasswordField || !currentPasswordField.value;
+  // passwordGone is used implicitly — if navigated=false and passwordStillSame=false,
+  // password must have cleared (modal success). Fall through to save.
+
+  // If URL didn't change AND password field still has same value = almost certainly failed
+  if (!navigated && passwordStillSame) {
+    console.log(
+      '[VaultX] Login likely failed (no navigation, same password) — not saving'
+    );
     return;
   }
 
-  // URL changed = login/register likely succeeded → proceed
+  // If URL changed OR password is gone/changed — assume success
   try {
     const session = (await chrome.runtime.sendMessage({
       type: 'CHECK_SESSION',
@@ -549,18 +561,35 @@ function setupFormSubmitCapture() {
 
     await new Promise((r) => setTimeout(r, 1200));
 
-    // Re-check whichever field we originally captured (password OR card number)
     const stillThere = hasPassword
       ? findPasswordInput()
       : findCardNumberInput();
     const sameUrl = window.location.href === submittedUrl;
     const sameValue = stillThere?.value === capturedValue;
 
+    // Skip ONLY if: same URL AND the exact same field still has the exact same value
+    // If field is gone (modal closed, SPA transition) OR value changed OR URL changed → save
     if (sameUrl && stillThere && sameValue) {
       console.log(
-        '[VaultX] Skipping save — form unchanged after submit (likely failed)'
+        '[VaultX] Skipping save — form unchanged (likely failed login)'
       );
       return;
+    }
+
+    // Additional check: if SAME URL and field is gone — modal login success scenario
+    // (e.g. boot.dev, Google, GitHub modal logins)
+    const fieldGone = !stillThere || !stillThere.value;
+    const isModalSuccess = sameUrl && fieldGone;
+
+    // Proceed if: URL changed OR field gone (modal closed) OR field value changed
+    if (
+      !sameUrl ||
+      isModalSuccess ||
+      (stillThere && stillThere.value !== capturedValue)
+    ) {
+      // this is a success — fall through to save
+    } else {
+      return; // shouldn't reach here, but safety net
     }
 
     // CHECK SESSION FIRST — don't show banner if not logged in
