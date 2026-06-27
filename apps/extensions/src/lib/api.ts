@@ -62,8 +62,11 @@ export async function apiRequest<T>(
         body: body ? JSON.stringify(body) : undefined,
       });
     } else {
-      // Refresh failed — session truly expired
+      // Refresh failed (token expired or cookie unavailable in extension context)
+      // Clear in-memory session only — keep persistedAuth so popup shows reunlock
+      // instead of full login. User just needs to re-enter master password.
       await chrome.storage.session.remove('session');
+      // DO NOT remove persistedAuth here — that would force full login
       throw new Error('SESSION_EXPIRED');
     }
   }

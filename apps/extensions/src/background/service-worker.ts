@@ -22,49 +22,6 @@ import type {
   ItemPayload,
 } from '../types';
 
-chrome.alarms.create('auto-lock-check', { periodInMinutes: 1 });
-
-const SESSION_DURATION_MS = 15 * 24 * 60 * 60 * 1000; // 15 days
-const WARN_BEFORE_MS = 24 * 60 * 60 * 1000; // warn at 14 days
-
-chrome.alarms.onAlarm.addListener(async (alarm) => {
-  if (alarm.name !== 'auto-lock-check') return;
-
-  const persisted = await chrome.storage.local.get('persistedAuth');
-  const loginAt = persisted.persistedAuth?.loginAt as number | undefined;
-
-  if (!loginAt) return;
-
-  const sessionAgeMs = Date.now() - loginAt;
-
-  // Warn at 14 days
-  if (
-    sessionAgeMs > SESSION_DURATION_MS - WARN_BEFORE_MS &&
-    sessionAgeMs < SESSION_DURATION_MS
-  ) {
-    const daysLeft = Math.ceil((SESSION_DURATION_MS - sessionAgeMs) / 86400000);
-    const alreadyWarned = (
-      await chrome.storage.local.get('vaultx_session_warned')
-    ).vaultx_session_warned;
-    if (!alreadyWarned) {
-      await chrome.storage.local.set({ vaultx_session_warned: true });
-      chrome.notifications?.create('session-expiry-warning', {
-        type: 'basic',
-        iconUrl: '/icons/icon128.png',
-        title: 'VaultX — Session expiring soon',
-        message: `Your VaultX session expires in ${daysLeft} day${daysLeft !== 1 ? 's' : ''}. Open the extension to stay signed in.`,
-      });
-    }
-  }
-
-  // Expire at 15 days
-  if (sessionAgeMs > SESSION_DURATION_MS) {
-    await clearSession();
-    await chrome.storage.local.remove('vaultx_session_warned');
-    console.log('[VaultX] Session expired after 15 days');
-  }
-});
-
 // ─── Session Helpers ─────────────────────────────────────────────────────────
 // chrome.storage.session = in-memory storage. Survives SW restarts within the
 // same browser session. Cleared when browser closes. Perfect for masterKey.
@@ -73,15 +30,8 @@ async function saveSession(data: SessionData): Promise<void> {
   await chrome.storage.session.set({
     session: { masterKey: data.masterKey, email: data.email },
   });
-  // Preserve existing loginAt if already set (don't reset on reunlock)
-  const existing = await chrome.storage.local.get('persistedAuth');
-  const loginAt = existing.persistedAuth?.loginAt ?? Date.now();
   await chrome.storage.local.set({
-    persistedAuth: {
-      accessToken: data.accessToken,
-      email: data.email,
-      loginAt,
-    },
+    persistedAuth: { accessToken: data.accessToken, email: data.email },
   });
 }
 
@@ -103,8 +53,15 @@ async function getSession(): Promise<SessionData | null> {
 }
 
 async function clearSession(): Promise<void> {
+  // Clears in-memory session only (masterKey) — called on browser close, lock
   await chrome.storage.session.remove('session');
-  await chrome.storage.local.remove(['persistedAuth', 'vaultx_session_warned']);
+  // DO NOT remove persistedAuth — keeps user logged in across browser restarts
+}
+
+async function fullLogout(): Promise<void> {
+  // Called ONLY on explicit logout — removes everything
+  await chrome.storage.session.remove('session');
+  await chrome.storage.local.remove('persistedAuth');
 }
 
 // check if we have a persisted login (browser restarted, masterKey lost)
@@ -342,7 +299,7 @@ async function handleReunlock(payload: {
 }
 
 async function handleLogout(): Promise<LogoutResponse> {
-  await clearSession();
+  await fullLogout();
   return { success: true };
 }
 

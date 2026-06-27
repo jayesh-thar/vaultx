@@ -1410,6 +1410,12 @@ export default function Landing() {
             >
               GitHub
             </a>{' '}
+            <a
+              href="/privacy"
+              style={{ color: T.accentText, textDecoration: 'none' }}
+            >
+              Privacy
+            </a>{' '}
             · Built with care for privacy
           </p>
         </footer>

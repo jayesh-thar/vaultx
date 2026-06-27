@@ -91,6 +91,7 @@ export default function App() {
           <Route path="/auth/google/setup" element={<GoogleSetup />} />{' '}
           <Route path="/auth/google/unlock" element={<GoogleUnlock />} />{' '}
           <Route path="*" element={<Navigate to="/login" replace />} />{' '}
+          <Route path="/privacy" element={<PrivacyPolicy />} />
         </Routes>
       </BrowserRouter>
       <ToastContainer />

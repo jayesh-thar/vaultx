@@ -1,6 +1,17 @@
 const APP_URL = process.env.APP_URL ?? 'http://localhost:5173';
 const BRAND_COLOR = '#10B981';
 
+function parseUserAgent(ua: string | undefined): string {
+  if (!ua) return 'Unknown device';
+  if (ua.includes('Edg/') || ua.includes('EdgA/')) return 'Microsoft Edge';
+  if (ua.includes('Chrome/') && !ua.includes('Edg')) return 'Google Chrome';
+  if (ua.includes('Firefox/')) return 'Mozilla Firefox';
+  if (ua.includes('Safari/') && !ua.includes('Chrome')) return 'Safari';
+  if (ua.includes('Android')) return 'Android browser';
+  if (ua.includes('iPhone') || ua.includes('iPad')) return 'iOS browser';
+  return 'Web browser';
+}
+
 // ─── Base layout ─────────────────────────────────────────────────────────────
 function layout(title: string, body: string): string {
   return `<!DOCTYPE html>
@@ -143,7 +154,7 @@ export function newLoginEmail(
     ${infoRow('Account', email)}
     ${infoRow('Time', now + ' UTC')}
     ${infoRow('IP Address', deviceInfo.ip ?? 'Unknown')}
-    ${infoRow('Device', deviceInfo.userAgent?.slice(0, 60) ?? 'Unknown')}
+    ${infoRow('Device', parseUserAgent(deviceInfo.userAgent))}
     ${divider()}
     <div style="background:#1A1A00;border-radius:8px;padding:16px;margin:16px 0;">
       <p style="color:#F59E0B;font-size:13px;font-weight:500;margin:0 0 6px 0;">⚠ Wasn't you?</p>
