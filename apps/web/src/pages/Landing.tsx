@@ -1409,7 +1409,8 @@ export default function Landing() {
               style={{ color: T.accentText, textDecoration: 'none' }}
             >
               GitHub
-            </a>{' '}
+            </a>
+            {' · '}
             <a
               href="/privacy"
               style={{ color: T.accentText, textDecoration: 'none' }}
