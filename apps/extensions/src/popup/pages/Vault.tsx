@@ -63,6 +63,7 @@ export default function Vault({ onLogout }: Props) {
       if (
         url.startsWith('chrome://') ||
         url.startsWith('edge://') ||
+        url.includes('vault-x.xyz') ||
         url.includes('vaultx-jayesh.vercel.app') ||
         url.includes('localhost')
       )
@@ -166,7 +167,10 @@ export default function Vault({ onLogout }: Props) {
         });
         setItems(unique);
       } else if (res.error === 'SESSION_EXPIRED') {
-        onLogout();
+        // onLogout();
+        // Don't call onLogout() — that clears persistedAuth and forces full login
+        // Just go back to App which will re-check session and show re-unlock
+        window.location.reload();
       } else {
         setError(res.error ?? 'Failed');
       }

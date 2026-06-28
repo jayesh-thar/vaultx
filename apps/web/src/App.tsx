@@ -16,6 +16,7 @@ import ErrorBoundary from './components/ErrorBoundary';
 import StatsPage from './pages/Stats';
 import ForgotPassword from './pages/ForgotPassword';
 import Landing from './pages/Landing';
+import PrivacyPolicy from './pages/PrivacyPolicy';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { userId, vaultKey } = useVaultStore();
@@ -90,8 +91,8 @@ export default function App() {
           <Route path="/forgot-password" element={<ForgotPassword />} />
           <Route path="/auth/google/setup" element={<GoogleSetup />} />{' '}
           <Route path="/auth/google/unlock" element={<GoogleUnlock />} />{' '}
-          <Route path="*" element={<Navigate to="/login" replace />} />{' '}
           <Route path="/privacy" element={<PrivacyPolicy />} />
+          <Route path="*" element={<Navigate to="/login" replace />} />
         </Routes>
       </BrowserRouter>
       <ToastContainer />

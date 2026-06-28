@@ -7,6 +7,7 @@ const EXCLUDED_DOMAINS = [
   'bitwarden.com',
   '1password.com',
   'lastpass.com',
+  'vault-x.xyz',
   'vaultx-jayesh.vercel.app',
 ];
 const isExcluded = EXCLUDED_DOMAINS.some((d) =>
