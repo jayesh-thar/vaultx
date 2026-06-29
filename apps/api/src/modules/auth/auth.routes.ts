@@ -21,6 +21,7 @@ import {
   googleUnlockSession,
   forgotPasswordWithRecoveryKey,
   getRecoveryData,
+  refreshTokenForExtension,
 } from './auth.controller';
 import { authenticate } from '../../middleware/authenticate';
 import { validateEmailDomain } from '../../middleware/emailValidator';
@@ -44,6 +45,7 @@ router.post(
 );
 router.post('/login', loginLimiter, login);
 router.post('/refresh', refreshLimiter, refresh);
+router.post('/refresh-token', refreshLimiter, refreshTokenForExtension);
 router.put('/change-password', authenticate, changePassword);
 router.post('/logout', authenticate, logout);
 router.post('/prelogin', prelogin);

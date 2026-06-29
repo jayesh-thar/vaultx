@@ -6,15 +6,29 @@ interface ApiOptions {
   token?: string;
 }
 
-async function refreshAccessToken(): Promise<string | null> {
+async function refreshAccessToken(): Promise<{
+  accessToken: string;
+  refreshToken: string;
+} | null> {
   try {
-    const res = await fetch(`${API_BASE}/api/auth/refresh`, {
+    const stored = await chrome.storage.local.get('persistedAuth');
+    const refreshToken = stored.persistedAuth?.refreshToken;
+
+    if (!refreshToken) return null;
+
+    const res = await fetch(`${API_BASE}/api/auth/refresh-token`, {
       method: 'POST',
-      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refreshToken }),
+      // NO credentials: 'include' — we're using body, not cookie
     });
+
     if (!res.ok) return null;
+
     const data = await res.json();
-    return data.accessToken ?? null;
+    if (!data.accessToken || !data.refreshToken) return null;
+
+    return { accessToken: data.accessToken, refreshToken: data.refreshToken };
   } catch {
     return null;
   }
@@ -40,33 +54,31 @@ export async function apiRequest<T>(
 
   // Auto-refresh on 401
   if (res.status === 401 && token) {
-    const newToken = await refreshAccessToken();
+    const tokens = await refreshAccessToken();
 
-    if (newToken) {
-      // Update stored session with new token
-      const sessionRes = await chrome.storage.session.get('session');
-      if (sessionRes.session) {
-        await chrome.storage.session.set({
-          session: { ...sessionRes.session, accessToken: newToken },
-        });
-      }
+    if (tokens) {
+      // Store both new tokens
+      const stored = await chrome.storage.local.get('persistedAuth');
+      await chrome.storage.local.set({
+        persistedAuth: {
+          ...stored.persistedAuth,
+          accessToken: tokens.accessToken,
+          refreshToken: tokens.refreshToken, // rotate stored refresh token
+        },
+      });
 
-      // Retry with new token
+      // Retry original request with new access token
       res = await fetch(`${API_BASE}${path}`, {
         method,
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${newToken}`,
+          Authorization: `Bearer ${tokens.accessToken}`,
         },
-        credentials: 'include',
         body: body ? JSON.stringify(body) : undefined,
       });
     } else {
-      // Refresh failed (token expired or cookie unavailable in extension context)
-      // Clear in-memory session only — keep persistedAuth so popup shows reunlock
-      // instead of full login. User just needs to re-enter master password.
+      // Refresh failed — clear only in-memory session, keep local for reunlock
       await chrome.storage.session.remove('session');
-      // DO NOT remove persistedAuth here — that would force full login
       throw new Error('SESSION_EXPIRED');
     }
   }

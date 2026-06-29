@@ -23,7 +23,7 @@ import {
   signAccessToken,
   signRefreshToken,
 } from '../../utils/jwt';
-
+import jwt from 'jsonwebtoken';
 const COOKIE_OPTIONS = {
   httpOnly: true, // JS can't read this cookie
   secure: process.env.NODE_ENV === 'production', // HTTPS only in prod
@@ -695,6 +695,7 @@ export async function googleUnlockSession(
       userId: user.id,
       email: user.email,
       kdfSalt: user.kdf_salt,
+      refreshToken,
       kdfParams:
         typeof user.kdf_params === 'string'
           ? JSON.parse(user.kdf_params)
@@ -787,5 +788,75 @@ export async function getRecoveryData(
     res.json(userRow.rows[0]);
   } catch {
     res.status(500).json({ error: 'Failed' });
+  }
+}
+
+export async function refreshTokenForExtension(req: Request, res: Response) {
+  try {
+    const { refreshToken } = req.body;
+    if (!refreshToken) {
+      return res.status(401).json({ message: 'No refresh token' });
+    }
+
+    // Verify the token
+    let payload: { userId: string; tokenId: string };
+    try {
+      payload = jwt.verify(refreshToken, process.env.REFRESH_TOKEN_SECRET!) as {
+        userId: string;
+        tokenId: string;
+      };
+    } catch {
+      return res.status(401).json({ message: 'Invalid refresh token' });
+    }
+
+    // Check token exists in DB and not revoked (rotation detection)
+    const stored = await pool.query(
+      'SELECT * FROM refresh_tokens WHERE token_id = $1 AND user_id = $2 AND revoked = false',
+      [payload.tokenId, payload.userId]
+    );
+
+    if (stored.rows.length === 0) {
+      // Reuse detected — revoke all tokens for this user
+      await pool.query(
+        'UPDATE refresh_tokens SET revoked = true WHERE user_id = $1',
+        [payload.userId]
+      );
+      return res
+        .status(401)
+        .json({ message: 'Token reuse detected — all sessions revoked' });
+    }
+
+    // Rotate — revoke old token
+    await pool.query(
+      'UPDATE refresh_tokens SET revoked = true WHERE token_id = $1',
+      [payload.tokenId]
+    );
+
+    // Create new tokens
+    const newTokenId = crypto.randomUUID();
+    const newRefreshToken = jwt.sign(
+      { userId: payload.userId, tokenId: newTokenId },
+      process.env.REFRESH_TOKEN_SECRET!,
+      { expiresIn: '30d' }
+    );
+    const newAccessToken = jwt.sign(
+      { userId: payload.userId },
+      process.env.ACCESS_TOKEN_SECRET!,
+      { expiresIn: '15m' }
+    );
+
+    // Store new refresh token
+    await pool.query(
+      'INSERT INTO refresh_tokens (token_id, user_id, revoked, created_at) VALUES ($1, $2, false, NOW())',
+      [newTokenId, payload.userId]
+    );
+
+    return res.json({
+      accessToken: newAccessToken,
+      refreshToken: newRefreshToken,
+    });
+  } catch (err) {
+    console.error('[refreshTokenForExtension]', err);
+    return res.status(401).json({ message: 'Invalid refresh token' });
   }
 }

@@ -41,5 +41,6 @@ export interface DecryptedItem {
 export interface SessionData {
   masterKey: number[]; // Uint8Array stored as number[] (storage only handles JSON)
   accessToken: string;
+  refreshToken: string;
   email: string;
 }

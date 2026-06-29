@@ -31,7 +31,11 @@ async function saveSession(data: SessionData): Promise<void> {
     session: { masterKey: data.masterKey, email: data.email },
   });
   await chrome.storage.local.set({
-    persistedAuth: { accessToken: data.accessToken, email: data.email },
+    persistedAuth: {
+      accessToken: data.accessToken,
+      refreshToken: data.refreshToken, // ← ADD
+      email: data.email,
+    },
   });
 }
 
@@ -42,11 +46,16 @@ async function getSession(): Promise<SessionData | null> {
     | undefined;
 
   if (session?.masterKey) {
-    // masterKey present in memory — fully unlocked
     const persisted = await chrome.storage.local.get('persistedAuth');
     const accessToken = persisted.persistedAuth?.accessToken;
+    const refreshToken = persisted.persistedAuth?.refreshToken;
     if (!accessToken) return null;
-    return { masterKey: session.masterKey, accessToken, email: session.email };
+    return {
+      masterKey: session.masterKey,
+      accessToken,
+      refreshToken: refreshToken ?? '',
+      email: session.email,
+    };
   }
 
   return null;
@@ -216,6 +225,7 @@ async function handleLogin(payload: {
     await saveSession({
       masterKey: Array.from(masterKeyBytes),
       accessToken: loginRes.accessToken,
+      refreshToken: loginRes.refreshToken,
       email,
     });
 
@@ -252,6 +262,7 @@ async function handleReunlock(payload: {
     // Re-login to get fresh token + vaultKeyEnc (same as full login)
     const loginRes = await apiRequest<{
       accessToken: string;
+      refreshToken: string;
       vaultKeyEnc: string;
       vaultKeyIv: string;
     }>('/api/auth/login', {
@@ -282,7 +293,11 @@ async function handleReunlock(payload: {
 
     // Update persisted token (it may have rotated)
     await chrome.storage.local.set({
-      persistedAuth: { accessToken: loginRes.accessToken, email },
+      persistedAuth: {
+        accessToken: loginRes.accessToken,
+        refreshToken: loginRes.refreshToken,
+        email,
+      },
     });
 
     await chrome.storage.session.set({

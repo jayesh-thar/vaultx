@@ -25,7 +25,8 @@
       "matches": ["<all_urls>"],
       "js": ["src/content/content-script.ts"],
       "run_at": "document_idle",
-      "exclude_matches": ["http://localhost/*", "https://localhost/*"]
+      "exclude_matches": ["http://localhost/*", "https://localhost/*"],
+      "all_frames": true
     }
   ],
   "permissions": [
